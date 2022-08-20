@@ -1,0 +1,7 @@
+[package]
+name = "comemo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+comemo-macros = { path = "./macros" }
