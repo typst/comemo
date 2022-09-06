@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 comemo-macros = { path = "./macros" }
+siphasher = "0.3"
+once_cell = "1"

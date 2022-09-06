@@ -4,6 +4,10 @@ Tracked memoization.
 
 pub use comemo_macros::{memoize, track};
 
+// This is an implementation detail, which shouldn't directly be used.
+#[doc(hidden)]
+pub use {once_cell, siphasher};
+
 use std::ops::Deref;
 
 /// Tracks accesses to a value.
@@ -30,15 +34,14 @@ pub trait Track: Sized {
         Tracked(self)
     }
 
+    // Everything below is an implementation detail.
+    // You shouldn't use that stuff directly.
+
     /// The tracked API surface of the type.
-    ///
-    /// This is an implementation detail, which shouldn't directly be used.
     #[doc(hidden)]
     type Surface;
 
     /// Access the tracked API surface.
-    ///
-    /// This is an implementation detail, which shouldn't directly be used.
     #[doc(hidden)]
     fn surface(&self) -> &Self::Surface;
 }

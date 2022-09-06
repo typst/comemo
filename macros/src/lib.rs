@@ -13,6 +13,7 @@ mod memoize;
 mod track;
 
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_quote, Error, Result};
