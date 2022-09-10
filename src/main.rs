@@ -1,4 +1,10 @@
 use std::cell::{Cell, RefCell};
+use std::fmt::{self, Debug, Formatter};
+use std::hash::Hash;
+use std::marker::PhantomData;
+use std::num::NonZeroU128;
+
+use siphasher::sip128::{Hasher128, SipHasher};
 
 // TODO
 // - Nested tracked call
@@ -39,7 +45,7 @@ fn describe(image: TrackedImage) -> &'static str {
 
     thread_local! {
         static NR: Cell<usize> = Cell::new(0);
-        static CACHE: RefCell<Vec<(ImageConstraint, &'static str)>> =
+        static CACHE: RefCell<Vec<(ImageTracker, &'static str)>> =
             RefCell::new(vec![]);
     }
 
@@ -48,15 +54,18 @@ fn describe(image: TrackedImage) -> &'static str {
         cache
             .borrow()
             .iter()
-            .find(|(ct, _)| ct.valid(image.inner))
+            .find(|(tracker, _)| tracker.valid(image.inner))
             .map(|&(_, output)| output)
     });
 
     let output = output.unwrap_or_else(|| {
-        let ct = ImageConstraint::default();
-        let image = TrackedImage { inner: image.inner, tracker: Some(&ct) };
+        let tracker = ImageTracker::default();
+        let image = TrackedImage {
+            inner: image.inner,
+            tracker: Some(&tracker),
+        };
         let output = inner(image);
-        CACHE.with(|cache| cache.borrow_mut().push((ct, output)));
+        CACHE.with(|cache| cache.borrow_mut().push((tracker, output)));
         hit = false;
         output
     });
@@ -75,14 +84,14 @@ fn describe(image: TrackedImage) -> &'static str {
 #[derive(Copy, Clone)]
 struct TrackedImage<'a> {
     inner: &'a Image,
-    tracker: Option<&'a ImageConstraint>,
+    tracker: Option<&'a ImageTracker>,
 }
 
 impl<'a> TrackedImage<'a> {
     fn width(&self) -> u32 {
         let output = self.inner.width();
         if let Some(tracker) = &self.tracker {
-            tracker.width.set(Some(output));
+            tracker.width.track(&output);
         }
         output
     }
@@ -90,23 +99,52 @@ impl<'a> TrackedImage<'a> {
     fn height(&self) -> u32 {
         let output = self.inner.height();
         if let Some(tracker) = &self.tracker {
-            tracker.height.set(Some(output));
+            tracker.height.track(&output);
         }
         output
     }
 }
 
 #[derive(Debug, Default)]
-struct ImageConstraint {
-    width: Cell<Option<u32>>,
-    height: Cell<Option<u32>>,
+struct ImageTracker {
+    width: HashTracker<u32>,
+    height: HashTracker<u32>,
 }
 
-impl ImageConstraint {
+impl ImageTracker {
     fn valid(&self, image: &Image) -> bool {
-        self.width.get().map_or(true, |v| v == image.width())
-            && self.height.get().map_or(true, |v| v == image.height())
+        self.width.valid(&image.width()) && self.height.valid(&image.height())
     }
+}
+
+#[derive(Default)]
+struct HashTracker<T: Hash>(Cell<Option<NonZeroU128>>, PhantomData<T>);
+
+impl<T: Hash> HashTracker<T> {
+    fn valid(&self, value: &T) -> bool {
+        self.0.get().map_or(true, |v| v == siphash(value))
+    }
+
+    fn track(&self, value: &T) {
+        self.0.set(Some(siphash(value)));
+    }
+}
+
+impl<T: Hash> Debug for HashTracker<T> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "HashTracker({:?})", self.0)
+    }
+}
+
+/// Produce a non zero 128-bit hash of the value.
+fn siphash<T: Hash>(value: &T) -> NonZeroU128 {
+    let mut state = SipHasher::new();
+    value.hash(&mut state);
+    state
+        .finish128()
+        .as_u128()
+        .try_into()
+        .unwrap_or(NonZeroU128::new(u128::MAX).unwrap())
 }
 
 /// A raster image.
