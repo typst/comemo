@@ -1,5 +1,10 @@
 use std::cell::{Cell, RefCell};
 
+// TODO
+// - Nested tracked call
+// - Tracked return value from tracked method
+// - Tracked methods with arguments
+
 fn main() {
     let mut image = Image::new(20, 40);
 
@@ -48,10 +53,10 @@ fn describe(image: TrackedImage) -> &'static str {
     });
 
     let output = output.unwrap_or_else(|| {
-        let ct = RefCell::new(ImageConstraint::default());
+        let ct = ImageConstraint::default();
         let image = TrackedImage { inner: image.inner, tracker: Some(&ct) };
         let output = inner(image);
-        CACHE.with(|cache| cache.borrow_mut().push((ct.into_inner(), output)));
+        CACHE.with(|cache| cache.borrow_mut().push((ct, output)));
         hit = false;
         output
     });
@@ -70,14 +75,14 @@ fn describe(image: TrackedImage) -> &'static str {
 #[derive(Copy, Clone)]
 struct TrackedImage<'a> {
     inner: &'a Image,
-    tracker: Option<&'a RefCell<ImageConstraint>>,
+    tracker: Option<&'a ImageConstraint>,
 }
 
 impl<'a> TrackedImage<'a> {
     fn width(&self) -> u32 {
         let output = self.inner.width();
         if let Some(tracker) = &self.tracker {
-            tracker.borrow_mut().width = Some(output);
+            tracker.width.set(Some(output));
         }
         output
     }
@@ -85,7 +90,7 @@ impl<'a> TrackedImage<'a> {
     fn height(&self) -> u32 {
         let output = self.inner.height();
         if let Some(tracker) = &self.tracker {
-            tracker.borrow_mut().height = Some(output);
+            tracker.height.set(Some(output));
         }
         output
     }
@@ -93,14 +98,14 @@ impl<'a> TrackedImage<'a> {
 
 #[derive(Debug, Default)]
 struct ImageConstraint {
-    width: Option<u32>,
-    height: Option<u32>,
+    width: Cell<Option<u32>>,
+    height: Cell<Option<u32>>,
 }
 
 impl ImageConstraint {
     fn valid(&self, image: &Image) -> bool {
-        self.width.map_or(true, |v| v == image.width())
-            && self.height.map_or(true, |v| v == image.height())
+        self.width.get().map_or(true, |v| v == image.width())
+            && self.height.get().map_or(true, |v| v == image.height())
     }
 }
 
