@@ -1,11 +1,23 @@
 //! Tracked memoization.
 
+// These are implementation details. Do not rely on them!
+#[doc(hidden)]
+pub mod internal;
+
 pub use comemo_macros::{memoize, track};
 
-use std::hash::Hash;
 use std::ops::Deref;
 
-use siphasher::sip128::{Hasher128, SipHasher};
+/// A trackable type.
+///
+/// This is implemented by types that have an implementation block annoted with
+/// [`#[track]`](track).
+pub trait Track<'a>: internal::Trackable<'a> {
+    /// Start tracking a value.
+    fn track(&'a self) -> Tracked<'a, Self> {
+        Tracked { inner: self, tracker: None }
+    }
+}
 
 /// Tracks accesses to a value.
 ///
@@ -20,24 +32,23 @@ use siphasher::sip128::{Hasher128, SipHasher};
 /// let sentence = describe(image.track());
 /// println!("{sentence}");
 /// ```
-pub struct Tracked<'a, T>(<T as Track<'a>>::Surface)
+pub struct Tracked<'a, T>
 where
-    T: Track<'a>;
-
-/// A trackable type.
-pub trait Track<'a>: Sized + 'a {
-    /// Start tracking a value.
-    fn track(&'a self) -> Tracked<Self> {
-        Tracked(Self::Surface::from(self))
-    }
-
-    /// The tracked API surface of the type.
-    type Surface: From<&'a Self>;
-
-    /// The tracking constraint.
-    type Constraint: Default;
+    T: Track<'a>,
+{
+    /// A reference to the tracked value.
+    inner: &'a T,
+    /// A tracker which stores constraints for T. It is filled by the tracked
+    /// methods on T's generated surface type.
+    ///
+    /// Starts out as `None` and is set to a stack-stored tracker in the
+    /// preamble of memoized functions.
+    tracker: Option<&'a T::Tracker>,
 }
 
+// The type `Tracked<T>` automatically dereferences to T's generated surface
+// type. This makes all tracked methods available, but leaves all other ones
+// unaccessible.
 impl<'a, T> Deref for Tracked<'a, T>
 where
     T: Track<'a>,
@@ -45,54 +56,17 @@ where
     type Target = T::Surface;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        T::surface(self)
     }
 }
 
-/// Validate a type against a constraint.
-pub trait Validate {
-    /// The constraint generated for validation of this type.
-    type Constraint;
+impl<'a, T> Copy for Tracked<'a, T> where T: Track<'a> {}
 
-    /// Generate a constraint for this type.
-    ///
-    /// The new constraint might hold all relevant information from the
-    /// beginning (hash constraint) or be updated over course of a memoized
-    /// function's execution based on how the type is used (tracked constraint).
-    fn constraint(&self) -> Self::Constraint;
-
-    /// Validate an instance of this type against a constraint.
-    fn valid(&self, ct: &Self::Constraint) -> bool;
-}
-
-impl<T> Validate for T
-where
-    T: Hash,
-{
-    type Constraint = u128;
-
-    fn constraint(&self) -> Self::Constraint {
-        let mut state = SipHasher::new();
-        self.hash(&mut state);
-        state.finish128().as_u128()
-    }
-
-    fn valid(&self, ct: &Self::Constraint) -> bool {
-        self.constraint() == *ct
-    }
-}
-
-impl<'a, T> Validate for Tracked<'a, T>
+impl<'a, T> Clone for Tracked<'a, T>
 where
     T: Track<'a>,
 {
-    type Constraint = <T as Track<'a>>::Constraint;
-
-    fn constraint(&self) -> Self::Constraint {
-        <T as Track>::Constraint::default()
-    }
-
-    fn valid(&self, _: &Self::Constraint) -> bool {
-        false
+    fn clone(&self) -> Self {
+        *self
     }
 }

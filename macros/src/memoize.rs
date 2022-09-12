@@ -1,10 +1,11 @@
 use super::*;
 
-/// Make a type trackable.
+/// Memoize a function.
 pub fn expand(func: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
     let name = func.sig.ident.to_string();
 
     let mut args = vec![];
+    let mut types = vec![];
     for input in &func.sig.inputs {
         let typed = match input {
             syn::FnArg::Typed(typed) => typed,
@@ -19,41 +20,96 @@ pub fn expand(func: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
         };
 
         args.push(ident);
+        types.push(typed.ty.as_ref());
     }
+
+    let ret = match &func.sig.output {
+        syn::ReturnType::Default => {
+            bail!(func.sig, "function must have a return type")
+        }
+        syn::ReturnType::Type(.., ty) => ty.as_ref(),
+    };
 
     let mut inner = func.clone();
     inner.sig.ident = syn::Ident::new("inner", Span::call_site());
 
-    let cts = args.iter().map(|arg| {
-        quote! {
-            Validate::constraint(&#arg)
+    if args.len() != 1 {
+        bail!(func, "expected exactly one argument");
+    }
+
+    let arg = args[0];
+    let ty = types[0];
+    let track = match ty {
+        syn::Type::Path(path) => {
+            let segs = &path.path.segments;
+            if segs.len() != 1 {
+                bail!(ty, "expected exactly one path segment")
+            }
+            let args = match &segs[0].arguments {
+                syn::PathArguments::AngleBracketed(args) => &args.args,
+                _ => bail!(ty, "expected `Tracked<_>` type"),
+            };
+            if args.len() != 1 {
+                bail!(args, "expected exactly one generic argument")
+            }
+            match &args[0] {
+                syn::GenericArgument::Type(ty) => ty,
+                ty => bail!(ty, "expected type argument"),
+            }
         }
-    });
+        _ => bail!(ty, "expected type of the form `Tracked<_>`"),
+    };
 
-    let mut outer = func.clone();
-    outer.block = parse_quote! { { #inner {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use comemo::Validate;
+    let trackable = quote! {
+        <#track as ::comemo::internal::Trackable<'static>>
+    };
 
-        static NR: AtomicUsize = AtomicUsize::new(1);
-        let nr = NR.fetch_add(1, Ordering::SeqCst);
-        let cts = (#(#cts,)*);
+    let body = quote! {
+        type Cache = ::core::cell::RefCell<
+            ::std::vec::Vec<(#trackable::Tracker, #ret)>
+        >;
 
-        println!("{:?}", cts);
+        thread_local! {
+            static CACHE: Cache = Default::default();
+        }
 
-        let mut hit = false;
-        let result = inner(#(#args),*);
+        let mut hit = true;
+        let output = CACHE.with(|cache| {
+            cache
+                .borrow()
+                .iter()
+                .find(|(tracker, _)| {
+                    let (#arg, _) = ::comemo::internal::to_parts(#arg);
+                    #trackable::valid(#arg, tracker)
+                })
+                .map(|&(_, output)| output)
+        });
+
+        let output = output.unwrap_or_else(|| {
+            let tracker = ::core::default::Default::default();
+            let (#arg, _) = ::comemo::internal::to_parts(#arg);
+            let #arg = ::comemo::internal::from_parts(#arg, Some(&tracker));
+            let output = inner(#arg);
+            CACHE.with(|cache| cache.borrow_mut().push((tracker, output)));
+            hit = false;
+            output
+        });
 
         println!(
-            "{} {} {} {}",
+            "{} {} {}",
             #name,
-            nr,
             if hit { "[hit]: " } else { "[miss]:" },
-            result,
+            output,
         );
 
-        result
-    } } };
+        output
+    };
+
+    let mut outer = func.clone();
+    outer.block = parse_quote! { {
+        #inner
+        { #body }
+    } };
 
     Ok(quote! { #outer })
 }

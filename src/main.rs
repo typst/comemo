@@ -1,10 +1,4 @@
-use std::cell::{Cell, RefCell};
-use std::fmt::{self, Debug, Formatter};
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::num::NonZeroU128;
-
-use siphasher::sip128::{Hasher128, SipHasher};
+use comemo::{Track, Tracked};
 
 // TODO
 // - Nested tracked call
@@ -29,13 +23,13 @@ fn main() {
     image.resize(80, 70);
     image.pixels.fill(255);
 
-    // [Hit] The last call only read the width and it stayed the same.
+    // [Hit] The previous call only read the width and it stayed the same.
     describe(image.track());
 }
 
 /// Format the image's size humanly readable.
-fn describe(image: TrackedImage) -> &'static str {
-    fn inner(image: TrackedImage) -> &'static str {
+fn describe(image: Tracked<Image>) -> &'static str {
+    fn inner(image: Tracked<Image>) -> &'static str {
         if image.width() > 50 || image.height() > 50 {
             "The image is big!"
         } else {
@@ -44,9 +38,10 @@ fn describe(image: TrackedImage) -> &'static str {
     }
 
     thread_local! {
-        static NR: Cell<usize> = Cell::new(0);
-        static CACHE: RefCell<Vec<(ImageTracker, &'static str)>> =
-            RefCell::new(vec![]);
+        static NR: ::core::cell::Cell<usize> = ::core::cell::Cell::new(0);
+        static CACHE: ::core::cell::RefCell<Vec<
+            (<Image as comemo::internal::Trackable<'static>>::Tracker, &'static str)>
+        > = ::core::cell::RefCell::new(vec![]);
     }
 
     let mut hit = true;
@@ -54,16 +49,17 @@ fn describe(image: TrackedImage) -> &'static str {
         cache
             .borrow()
             .iter()
-            .find(|(tracker, _)| tracker.valid(image.inner))
+            .find(|(tracker, _)| {
+                let (inner, _) = ::comemo::internal::to_parts(image);
+                <Image as comemo::internal::Trackable>::valid(inner, tracker)
+            })
             .map(|&(_, output)| output)
     });
 
     let output = output.unwrap_or_else(|| {
-        let tracker = ImageTracker::default();
-        let image = TrackedImage {
-            inner: image.inner,
-            tracker: Some(&tracker),
-        };
+        let tracker = ::core::default::Default::default();
+        let (image, _prev) = ::comemo::internal::to_parts(image);
+        let image = ::comemo::internal::from_parts(image, Some(&tracker));
         let output = inner(image);
         CACHE.with(|cache| cache.borrow_mut().push((tracker, output)));
         hit = false;
@@ -81,71 +77,60 @@ fn describe(image: TrackedImage) -> &'static str {
     output
 }
 
-#[derive(Copy, Clone)]
-struct TrackedImage<'a> {
-    inner: &'a Image,
-    tracker: Option<&'a ImageTracker>,
-}
+const _: () = {
+    mod inner {
+        use super::*;
 
-impl<'a> TrackedImage<'a> {
-    fn width(&self) -> u32 {
-        let output = self.inner.width();
-        if let Some(tracker) = &self.tracker {
-            tracker.width.track(&output);
+        impl<'a> ::comemo::Track<'a> for Image {}
+        impl<'a> ::comemo::internal::Trackable<'a> for Image {
+            type Tracker = Tracker;
+            type Surface = Surface<'a>;
+
+            fn valid(&self, tracker: &Self::Tracker) -> bool {
+                tracker.width.valid(&self.width()) && tracker.height.valid(&self.height())
+            }
+
+            fn surface<'s>(tracked: &'s Tracked<'a, Image>) -> &'s Self::Surface
+            where
+                Self: Track<'a>,
+            {
+                // Safety: Surface is repr(transparent).
+                unsafe { &*(tracked as *const _ as *const Self::Surface) }
+            }
         }
-        output
-    }
 
-    fn height(&self) -> u32 {
-        let output = self.inner.height();
-        if let Some(tracker) = &self.tracker {
-            tracker.height.track(&output);
+        #[repr(transparent)]
+        pub struct Surface<'a>(Tracked<'a, Image>);
+
+        impl<'a> Surface<'a> {
+            pub(super) fn width(&self) -> u32 {
+                let (inner, tracker) = ::comemo::internal::to_parts(self.0);
+                let output = inner.width();
+                if let Some(tracker) = &tracker {
+                    tracker.width.track(&output);
+                }
+                output
+            }
+
+            pub(super) fn height(&self) -> u32 {
+                let (inner, tracker) = ::comemo::internal::to_parts(self.0);
+                let output = inner.height();
+                if let Some(tracker) = &tracker {
+                    tracker.height.track(&output);
+                }
+                output
+            }
         }
-        output
+
+        #[derive(Default)]
+        pub struct Tracker {
+            width: ::comemo::internal::AccessTracker<u32>,
+            height: ::comemo::internal::AccessTracker<u32>,
+        }
     }
-}
+};
 
-#[derive(Debug, Default)]
-struct ImageTracker {
-    width: HashTracker<u32>,
-    height: HashTracker<u32>,
-}
-
-impl ImageTracker {
-    fn valid(&self, image: &Image) -> bool {
-        self.width.valid(&image.width()) && self.height.valid(&image.height())
-    }
-}
-
-#[derive(Default)]
-struct HashTracker<T: Hash>(Cell<Option<NonZeroU128>>, PhantomData<T>);
-
-impl<T: Hash> HashTracker<T> {
-    fn valid(&self, value: &T) -> bool {
-        self.0.get().map_or(true, |v| v == siphash(value))
-    }
-
-    fn track(&self, value: &T) {
-        self.0.set(Some(siphash(value)));
-    }
-}
-
-impl<T: Hash> Debug for HashTracker<T> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "HashTracker({:?})", self.0)
-    }
-}
-
-/// Produce a non zero 128-bit hash of the value.
-fn siphash<T: Hash>(value: &T) -> NonZeroU128 {
-    let mut state = SipHasher::new();
-    value.hash(&mut state);
-    state
-        .finish128()
-        .as_u128()
-        .try_into()
-        .unwrap_or(NonZeroU128::new(u128::MAX).unwrap())
-}
+// ---------------- Image ----------------
 
 /// A raster image.
 struct Image {
@@ -167,10 +152,6 @@ impl Image {
         self.width = width;
         self.height = height;
         // Resize the actual image ...
-    }
-
-    fn track(&self) -> TrackedImage<'_> {
-        TrackedImage { inner: self, tracker: None }
     }
 }
 

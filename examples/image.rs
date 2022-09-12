@@ -31,6 +31,17 @@ fn describe(image: Tracked<Image>) -> &'static str {
     }
 }
 
+#[comemo::track]
+impl Image {
+    fn width(&self) -> u32 {
+        self.width
+    }
+
+    fn height(&self) -> u32 {
+        self.height
+    }
+}
+
 /// A raster image.
 struct Image {
     width: u32,
@@ -51,16 +62,5 @@ impl Image {
         self.width = width;
         self.height = height;
         // Resize the actual image ...
-    }
-}
-
-#[comemo::track]
-impl Image {
-    fn width(&self) -> u32 {
-        self.width
-    }
-
-    fn height(&self) -> u32 {
-        self.height
     }
 }
