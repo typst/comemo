@@ -29,7 +29,7 @@ fn main() {
 
 /// Format the image's size humanly readable.
 fn describe(image: Tracked<Image>) -> &'static str {
-    fn inner(image: Tracked<Image>) -> &'static str {
+    fn describe(image: Tracked<Image>) -> &'static str {
         if image.width() > 50 || image.height() > 50 {
             "The image is big!"
         } else {
@@ -37,66 +37,35 @@ fn describe(image: Tracked<Image>) -> &'static str {
         }
     }
 
-    thread_local! {
-        static NR: ::core::cell::Cell<usize> = ::core::cell::Cell::new(0);
-        static CACHE: ::core::cell::RefCell<Vec<
-            (<Image as comemo::internal::Trackable<'static>>::Tracker, &'static str)>
-        > = ::core::cell::RefCell::new(vec![]);
-    }
-
-    let mut hit = true;
-    let output = CACHE.with(|cache| {
-        cache
-            .borrow()
-            .iter()
-            .find(|(tracker, _)| {
-                let (inner, _) = ::comemo::internal::to_parts(image);
-                <Image as comemo::internal::Trackable>::valid(inner, tracker)
-            })
-            .map(|&(_, output)| output)
-    });
-
-    let output = output.unwrap_or_else(|| {
-        let tracker = ::core::default::Default::default();
-        let (image, _prev) = ::comemo::internal::to_parts(image);
-        let image = ::comemo::internal::from_parts(image, Some(&tracker));
-        let output = inner(image);
-        CACHE.with(|cache| cache.borrow_mut().push((tracker, output)));
-        hit = false;
-        output
-    });
-
-    println!(
-        "{} {} {} {}",
-        "describe",
-        NR.with(|nr| nr.replace(nr.get() + 1)),
-        if hit { "[hit]: " } else { "[miss]:" },
-        output,
-    );
-
-    output
+    ::comemo::internal::CACHE
+        .with(|cache| cache.query(stringify!(describe), describe, image))
 }
 
 const _: () = {
     mod inner {
         use super::*;
 
-        impl<'a> ::comemo::Track<'a> for Image {}
-        impl<'a> ::comemo::internal::Trackable<'a> for Image {
+        impl ::comemo::Track for Image {}
+        impl ::comemo::internal::Trackable for Image {
             type Tracker = Tracker;
-            type Surface = Surface<'a>;
+            type Surface = SurfaceFamily;
 
             fn valid(&self, tracker: &Self::Tracker) -> bool {
                 tracker.width.valid(&self.width()) && tracker.height.valid(&self.height())
             }
 
-            fn surface<'s>(tracked: &'s Tracked<'a, Image>) -> &'s Self::Surface
+            fn surface<'a, 'r>(tracked: &'r Tracked<'a, Image>) -> &'r Surface<'a>
             where
-                Self: Track<'a>,
+                Self: Track,
             {
                 // Safety: Surface is repr(transparent).
-                unsafe { &*(tracked as *const _ as *const Self::Surface) }
+                unsafe { &*(tracked as *const _ as *const _) }
             }
+        }
+
+        pub enum SurfaceFamily {}
+        impl<'a> ::comemo::internal::Family<'a> for SurfaceFamily {
+            type Out = Surface<'a>;
         }
 
         #[repr(transparent)]

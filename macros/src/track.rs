@@ -46,22 +46,27 @@ pub fn expand(block: &syn::ItemImpl) -> Result<proc_macro2::TokenStream> {
     let track_impl = quote! {
         use super::*;
 
-        impl<'a> ::comemo::Track<'a> for #ty {}
-        impl<'a> ::comemo::internal::Trackable<'a> for #ty {
+        impl ::comemo::Track for #ty {}
+        impl ::comemo::internal::Trackable for #ty {
             type Tracker = Tracker;
-            type Surface = Surface<'a>;
+            type Surface = SurfaceFamily;
 
             fn valid(&self, tracker: &Self::Tracker) -> bool {
                 #(#tracked_valids)&&*
             }
 
-            fn surface<'s>(tracked: &'s Tracked<'a, #ty>) -> &'s Self::Surface
+            fn surface<'a, 'r>(tracked: &'r Tracked<'a, #ty>) -> &'r Surface<'a>
             where
-                Self: Track<'a>,
+                Self: Track,
             {
                 // Safety: Surface is repr(transparent).
-                unsafe { &*(tracked as *const _ as *const Self::Surface) }
+                unsafe { &*(tracked as *const _ as *const _) }
             }
+        }
+
+        pub enum SurfaceFamily {}
+        impl<'a> ::comemo::internal::Family<'a> for SurfaceFamily {
+            type Out = Surface<'a>;
         }
 
         #[repr(transparent)]
