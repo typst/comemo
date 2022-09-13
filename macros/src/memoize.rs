@@ -28,9 +28,8 @@ pub fn expand(func: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
     }
 
     let arg = args[0];
-    /*
     let ty = types[0];
-    let track = match ty {
+    let _inner = match ty {
         syn::Type::Path(path) => {
             let segs = &path.path.segments;
             if segs.len() != 1 {
@@ -50,7 +49,6 @@ pub fn expand(func: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
         }
         _ => bail!(ty, "expected type of the form `Tracked<_>`"),
     };
-    */
 
     let mut outer = func.clone();
     outer.block = parse_quote! { {

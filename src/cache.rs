@@ -16,8 +16,8 @@ pub struct Cache {
 }
 
 /// An entry in the cache.
-struct Entry<Tracker, R> {
-    tracker: Tracker,
+struct Entry<C, R> {
+    constraint: C,
     output: R,
 }
 
@@ -30,18 +30,18 @@ impl Cache {
         R: Debug + Clone + 'static,
     {
         let mut hit = true;
-        let output = self.lookup(tracked).unwrap_or_else(|| {
-            let tracker = T::Tracker::default();
+        let output = self.lookup::<T, R>(tracked).unwrap_or_else(|| {
+            let constraint = T::Constraint::default();
             let (inner, _) = to_parts(tracked);
-            let tracked = from_parts(inner, Some(&tracker));
+            let tracked = from_parts(inner, Some(&constraint));
             let output = f(tracked);
-            self.insert::<T, R>(tracker, output.clone());
+            self.insert::<T, R>(constraint, output.clone());
             hit = false;
             output
         });
 
-        let label = if hit { "[hit]: " } else { "[miss]:" };
-        eprintln!("{name} {label} {output:?}");
+        let label = if hit { "[hit]" } else { "[miss]" };
+        eprintln!("{name:<9} {label:<7} {output:?}");
 
         output
     }
@@ -56,18 +56,18 @@ impl Cache {
         self.map
             .borrow()
             .iter()
-            .filter_map(|boxed| boxed.downcast_ref::<Entry<T::Tracker, R>>())
-            .find(|entry| Trackable::valid(inner, &entry.tracker))
+            .filter_map(|boxed| boxed.downcast_ref::<Entry<T::Constraint, R>>())
+            .find(|entry| Trackable::valid(inner, &entry.constraint))
             .map(|entry| entry.output.clone())
     }
 
     /// Insert an entry into the cache.
-    fn insert<T, R>(&self, tracker: T::Tracker, output: R)
+    fn insert<T, R>(&self, constraint: T::Constraint, output: R)
     where
         T: Track,
         R: 'static,
     {
-        let entry = Entry { tracker, output };
+        let entry = Entry { constraint, output };
         self.map.borrow_mut().push(Box::new(entry));
     }
 }

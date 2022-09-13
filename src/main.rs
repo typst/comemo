@@ -42,16 +42,17 @@ fn describe(image: Tracked<Image>) -> &'static str {
 }
 
 const _: () = {
-    mod inner {
+    mod private {
         use super::*;
 
         impl ::comemo::Track for Image {}
         impl ::comemo::internal::Trackable for Image {
-            type Tracker = Tracker;
+            type Constraint = Constraint;
             type Surface = SurfaceFamily;
 
-            fn valid(&self, tracker: &Self::Tracker) -> bool {
-                tracker.width.valid(&self.width()) && tracker.height.valid(&self.height())
+            fn valid(&self, constraint: &Self::Constraint) -> bool {
+                constraint.width.valid(&self.width())
+                    && constraint.height.valid(&self.height())
             }
 
             fn surface<'a, 'r>(tracked: &'r Tracked<'a, Image>) -> &'r Surface<'a>
@@ -73,28 +74,28 @@ const _: () = {
 
         impl<'a> Surface<'a> {
             pub(super) fn width(&self) -> u32 {
-                let (inner, tracker) = ::comemo::internal::to_parts(self.0);
+                let (inner, constraint) = ::comemo::internal::to_parts(self.0);
                 let output = inner.width();
-                if let Some(tracker) = &tracker {
-                    tracker.width.track(&output);
+                if let Some(constraint) = &constraint {
+                    constraint.width.set(&output);
                 }
                 output
             }
 
             pub(super) fn height(&self) -> u32 {
-                let (inner, tracker) = ::comemo::internal::to_parts(self.0);
+                let (inner, constraint) = ::comemo::internal::to_parts(self.0);
                 let output = inner.height();
-                if let Some(tracker) = &tracker {
-                    tracker.height.track(&output);
+                if let Some(constraint) = &constraint {
+                    constraint.height.set(&output);
                 }
                 output
             }
         }
 
         #[derive(Default)]
-        pub struct Tracker {
-            width: ::comemo::internal::AccessTracker<u32>,
-            height: ::comemo::internal::AccessTracker<u32>,
+        pub struct Constraint {
+            width: ::comemo::internal::HashConstraint<u32>,
+            height: ::comemo::internal::HashConstraint<u32>,
         }
     }
 };

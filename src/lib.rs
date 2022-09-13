@@ -11,5 +11,6 @@ pub use comemo_macros::{memoize, track};
 #[doc(hidden)]
 pub mod internal {
     pub use crate::cache::CACHE;
-    pub use crate::track::{from_parts, to_parts, AccessTracker, Family, Trackable};
+    pub use crate::hash::HashConstraint;
+    pub use crate::track::{to_parts, Family, Trackable};
 }

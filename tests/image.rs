@@ -1,6 +1,7 @@
 use comemo::{Track, Tracked};
 
-fn main() {
+#[test]
+fn test_image() {
     let mut image = Image::new(20, 40);
 
     // [Miss] The cache is empty.
