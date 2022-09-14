@@ -36,7 +36,7 @@ impl Cache {
     where
         In: Input,
         Out: Debug + Clone + 'static,
-        F: for<'f> Fn(<In::Hooked as Family<'f>>::Out) -> Out,
+        F: for<'f> Fn(<In::Tracked as Family<'f>>::Out) -> Out,
     {
         // Compute the hash of the input's key part.
         let hash = {
@@ -48,8 +48,7 @@ impl Cache {
         let mut hit = true;
         let output = self.lookup::<In, Out>(hash, &input).unwrap_or_else(|| {
             let constraint = In::Constraint::default();
-            let input = input.hook_up(&constraint);
-            let value = func(input);
+            let value = func(input.track(&constraint));
             let constrained = Constrained { value: value.clone(), constraint };
             self.insert::<In, Out>(hash, constrained);
             hit = false;

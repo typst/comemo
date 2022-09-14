@@ -29,7 +29,7 @@ fn main() {
 
 /// Format the image's size humanly readable.
 fn describe(image: Tracked<Image>) -> &'static str {
-    fn describe(image: Tracked<Image>) -> &'static str {
+    fn describe((image,): (Tracked<Image>,)) -> &'static str {
         if image.width() > 50 || image.height() > 50 {
             "The image is big!"
         } else {
@@ -37,8 +37,13 @@ fn describe(image: Tracked<Image>) -> &'static str {
         }
     }
 
-    ::comemo::internal::CACHE
-        .with(|cache| cache.query(stringify!(describe), image, describe))
+    ::comemo::internal::CACHE.with(|cache| {
+        cache.query(
+            stringify!(describe),
+            ::comemo::internal::Args((image,)),
+            describe,
+        )
+    })
 }
 
 const _: () = {

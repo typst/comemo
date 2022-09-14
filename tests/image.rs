@@ -4,22 +4,20 @@ use comemo::{Track, Tracked};
 fn test_image() {
     let mut image = Image::new(20, 40);
 
-    // [Miss] The cache is empty.
-    describe(image.track());
-
-    // [Hit] Everything stayed the same.
-    describe(image.track());
+    describe(image.track()); // [Miss] The cache is empty.
+    describe(image.track()); // [Hit] Everything stayed the same.
 
     image.resize(80, 30);
 
-    // [Miss] The image's width and height are different.
-    describe(image.track());
+    describe(image.track()); // [Miss] Width and height changed.
+    select(image.track(), "width"); // [Miss] First call.
+    select(image.track(), "height"); // [Miss]
 
     image.resize(80, 70);
     image.pixels.fill(255);
 
-    // [Hit] The last call only read the width and it stayed the same.
-    describe(image.track());
+    describe(image.track()); // [Hit] Width is > 50 stayed the same.
+    select(image.track(), "width"); // [Hit] Width stayed the same.
 }
 
 /// Format the image's size humanly readable.
@@ -29,6 +27,16 @@ fn describe(image: Tracked<Image>) -> &'static str {
         "The image is big!"
     } else {
         "The image is small!"
+    }
+}
+
+/// Select either width or height.
+#[comemo::memoize]
+fn select(image: Tracked<Image>, what: &str) -> u32 {
+    match what {
+        "width" => image.width(),
+        "height" => image.height(),
+        _ => panic!("there is nothing else!"),
     }
 }
 

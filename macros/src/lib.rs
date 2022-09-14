@@ -13,8 +13,8 @@ mod memoize;
 mod track;
 
 use proc_macro::TokenStream;
-use quote::quote;
-use syn::{parse_quote, Error, Result};
+use quote::{quote, quote_spanned};
+use syn::{parse_quote, spanned::Spanned, Error, Result};
 
 /// Memoize a pure function.
 #[proc_macro_attribute]

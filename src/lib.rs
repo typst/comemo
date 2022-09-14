@@ -13,6 +13,7 @@ pub use comemo_macros::{memoize, track};
 pub mod internal {
     pub use crate::cache::CACHE;
     pub use crate::hash::HashConstraint;
+    pub use crate::input::{assert_hashable_or_trackable, Args};
     pub use crate::track::{from_parts, to_parts, Trackable};
 
     /// Helper trait for lifetime type families.

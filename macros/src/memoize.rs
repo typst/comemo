@@ -3,6 +3,7 @@ use super::*;
 /// Memoize a function.
 pub fn expand(func: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
     let mut args = vec![];
+    let mut types = vec![];
     for input in &func.sig.inputs {
         let typed = match input {
             syn::FnArg::Typed(typed) => typed,
@@ -17,18 +18,29 @@ pub fn expand(func: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
         };
 
         args.push(name);
+        types.push(typed.ty.as_ref());
     }
+
+    let mut inner = func.clone();
+    let arg_tuple = quote! { (#(#args,)*) };
+    let type_tuple = quote! { (#(#types,)*) };
+    inner.sig.inputs = parse_quote! { #arg_tuple: #type_tuple };
+
+    let bounds = args.iter().zip(&types).map(|(arg, ty)| {
+        quote_spanned! {
+            arg.span() => ::comemo::internal::assert_hashable_or_trackable::<#ty>();
+        }
+    });
 
     let mut outer = func.clone();
     let name = &func.sig.ident;
-    let arg = &args[0];
-
     outer.block = parse_quote! { {
-        #func
+        #inner
+        #(#bounds;)*
         ::comemo::internal::CACHE.with(|cache|
             cache.query(
                 stringify!(#name),
-                #arg,
+                ::comemo::internal::Args(#arg_tuple),
                 #name,
             )
         )
