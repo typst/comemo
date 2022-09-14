@@ -1,11 +1,45 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::fmt::Debug;
+use std::hash::Hash;
 
 use siphasher::sip128::{Hasher128, SipHasher};
 
 use crate::input::Input;
 use crate::internal::Family;
+
+/// Execute a function or use a cached result for it.
+pub fn cached<In, Out, F>(name: &str, input: In, func: F) -> Out
+where
+    In: Input,
+    Out: Debug + Clone + 'static,
+    F: for<'f> Fn(<In::Tracked as Family<'f>>::Out) -> Out + 'static,
+{
+    // Compute the hash of the input's key part.
+    let hash = {
+        let mut state = SipHasher::new();
+        TypeId::of::<F>().hash(&mut state);
+        input.key(&mut state);
+        state.finish128().as_u128()
+    };
+
+    let mut hit = true;
+    let output = CACHE.with(|cache| {
+        cache.lookup::<In, Out>(hash, &input).unwrap_or_else(|| {
+            let constraint = In::Constraint::default();
+            let value = func(input.track(&constraint));
+            let constrained = Constrained { value: value.clone(), constraint };
+            cache.insert::<In, Out>(hash, constrained);
+            hit = false;
+            value
+        })
+    });
+
+    let label = if hit { "[hit]" } else { "[miss]" };
+    eprintln!("{name:<9} {label:<7} {output:?}");
+
+    output
+}
 
 thread_local! {
     /// The global, dynamic cache shared by all memoized functions.
@@ -31,36 +65,6 @@ struct Constrained<T, C> {
 }
 
 impl Cache {
-    /// Execute `f` or use a cached result for it.
-    pub fn query<In, Out, F>(&self, name: &str, input: In, func: F) -> Out
-    where
-        In: Input,
-        Out: Debug + Clone + 'static,
-        F: for<'f> Fn(<In::Tracked as Family<'f>>::Out) -> Out,
-    {
-        // Compute the hash of the input's key part.
-        let hash = {
-            let mut state = SipHasher::new();
-            input.key(&mut state);
-            state.finish128().as_u128()
-        };
-
-        let mut hit = true;
-        let output = self.lookup::<In, Out>(hash, &input).unwrap_or_else(|| {
-            let constraint = In::Constraint::default();
-            let value = func(input.track(&constraint));
-            let constrained = Constrained { value: value.clone(), constraint };
-            self.insert::<In, Out>(hash, constrained);
-            hit = false;
-            value
-        });
-
-        let label = if hit { "[hit]" } else { "[miss]" };
-        eprintln!("{name:<9} {label:<7} {output:?}");
-
-        output
-    }
-
     /// Look for a matching entry in the cache.
     fn lookup<In, Out>(&self, hash: u128, input: &In) -> Option<Out>
     where
@@ -75,7 +79,7 @@ impl Cache {
                 entry
                     .output
                     .downcast_ref::<Constrained<Out, In::Constraint>>()
-                    .expect("comemo: hash collision")
+                    .expect("comemo: a hash collision occurred")
             })
             .find(|output| input.valid(&output.constraint))
             .map(|output| output.value.clone())

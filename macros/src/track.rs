@@ -1,7 +1,7 @@
 use super::*;
 
 /// Make a type trackable.
-pub fn expand(block: &syn::ItemImpl) -> Result<proc_macro2::TokenStream> {
+pub fn expand(block: syn::ItemImpl) -> Result<proc_macro2::TokenStream> {
     let ty = &block.self_ty;
 
     // Extract and validate the methods.

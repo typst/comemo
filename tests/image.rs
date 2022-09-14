@@ -11,7 +11,7 @@ fn test_image() {
 
     describe(image.track()); // [Miss] Width and height changed.
     select(image.track(), "width"); // [Miss] First call.
-    select(image.track(), "height"); // [Miss]
+    select(image.track(), "height"); // [Miss] Different 2nd argument.
 
     image.resize(80, 70);
     image.pixels.fill(255);

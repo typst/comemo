@@ -8,6 +8,9 @@ use crate::track::{from_parts, to_parts, Track, Trackable, Tracked};
 pub fn assert_hashable_or_trackable<T: Input>() {}
 
 /// An input to a cached function.
+///
+/// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
+/// types containing tuples up to length twelve.
 pub trait Input {
     /// Describes an instance of this input.
     type Constraint: Default + 'static;
@@ -81,7 +84,7 @@ impl<'a, T: Track> Input for Tracked<'a, T> {
     }
 }
 
-/// 'f -> Tracked<'f, T> type constructor.
+/// Type constructor for `'f -> Tracked<'f, T>`.
 pub struct TrackedFamily<T>(PhantomData<T>);
 
 impl<'f, T: Track + 'f> Family<'f> for TrackedFamily<T> {
@@ -91,17 +94,17 @@ impl<'f, T: Track + 'f> Family<'f> for TrackedFamily<T> {
 /// Wrapper for multiple inputs.
 pub struct Args<T>(pub T);
 
-/// Lifetime to tuple of arguments type constructor.
+/// Type constructor that maps a lifetime to tuple of arguments.
 pub struct ArgsFamily<T>(PhantomData<T>);
 
 macro_rules! args_input {
-    ($($idx:tt: $letter:ident),*) => {
+    ($($param:tt $idx:tt ),*) => {
         #[allow(unused_variables)]
-        impl<$($letter: Input),*> Input for Args<($($letter,)*)> {
-            type Constraint = ($($letter::Constraint,)*);
-            type Tracked = ArgsFamily<($($letter,)*)>;
+        impl<$($param: Input),*> Input for Args<($($param,)*)> {
+            type Constraint = ($($param::Constraint,)*);
+            type Tracked = ArgsFamily<($($param,)*)>;
 
-            fn key<H: Hasher>(&self, state: &mut H) {
+            fn key<T: Hasher>(&self, state: &mut T) {
                 $((self.0).$idx.key(state);)*
             }
 
@@ -121,17 +124,22 @@ macro_rules! args_input {
         }
 
         #[allow(unused_parens)]
-        impl<'f, $($letter: Input),*> Family<'f> for ArgsFamily<($($letter,)*)> {
-            type Out = ($(<$letter::Tracked as Family<'f>>::Out,)*);
+        impl<'f, $($param: Input),*> Family<'f> for ArgsFamily<($($param,)*)> {
+            type Out = ($(<$param::Tracked as Family<'f>>::Out,)*);
         }
     };
 }
 
 args_input! {}
-args_input! { 0: A }
-args_input! { 0: A, 1: B }
-args_input! { 0: A, 1: B, 2: C }
-args_input! { 0: A, 1: B, 2: C, 3: D }
-args_input! { 0: A, 1: B, 2: C, 3: D, 4: E }
-args_input! { 0: A, 1: B, 2: C, 3: D, 4: E, 5: F }
-args_input! { 0: A, 1: B, 2: C, 3: D, 4: E, 5: F, 6: G }
+args_input! { A 0 }
+args_input! { A 0, B 1 }
+args_input! { A 0, B 1, C 2 }
+args_input! { A 0, B 1, C 2, D 3 }
+args_input! { A 0, B 1, C 2, D 3, E 4 }
+args_input! { A 0, B 1, C 2, D 3, E 4, F 5 }
+args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6 }
+args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7 }
+args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8 }
+args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9 }
+args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10 }
+args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11 }

@@ -29,21 +29,18 @@ fn main() {
 
 /// Format the image's size humanly readable.
 fn describe(image: Tracked<Image>) -> &'static str {
-    fn describe((image,): (Tracked<Image>,)) -> &'static str {
-        if image.width() > 50 || image.height() > 50 {
-            "The image is big!"
-        } else {
-            "The image is small!"
-        }
-    }
-
-    ::comemo::internal::CACHE.with(|cache| {
-        cache.query(
-            stringify!(describe),
-            ::comemo::internal::Args((image,)),
-            describe,
-        )
-    })
+    ::comemo::internal::assert_hashable_or_trackable::<Tracked<Image>>();
+    ::comemo::internal::cached(
+        "describe",
+        ::comemo::internal::Args((image,)),
+        |(image,)| {
+            if image.width() > 50 || image.height() > 50 {
+                "The image is big!"
+            } else {
+                "The image is small!"
+            }
+        },
+    )
 }
 
 const _: () = {
