@@ -52,7 +52,7 @@ pub fn expand(block: &syn::ItemImpl) -> Result<proc_macro2::TokenStream> {
             type Surface = SurfaceFamily;
 
             fn valid(&self, constraint: &Self::Constraint) -> bool {
-                #(#tracked_valids)&&*
+                true #(&& #tracked_valids)*
             }
 
             fn surface<'a, 'r>(tracked: &'r Tracked<'a, #ty>) -> &'r Surface<'a>

@@ -75,7 +75,7 @@ pub trait Track: Trackable {
 }
 
 /// Non-exposed parts of the `Track` trait.
-pub trait Trackable {
+pub trait Trackable: 'static {
     /// Describes an instance of type.
     type Constraint: Default + 'static;
 

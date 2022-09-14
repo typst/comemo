@@ -38,7 +38,7 @@ fn describe(image: Tracked<Image>) -> &'static str {
     }
 
     ::comemo::internal::CACHE
-        .with(|cache| cache.query(stringify!(describe), describe, image))
+        .with(|cache| cache.query(stringify!(describe), image, describe))
 }
 
 const _: () = {
