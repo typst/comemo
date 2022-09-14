@@ -1,5 +1,7 @@
 use std::ops::Deref;
 
+use crate::internal::Family;
+
 /// Tracks accesses to a value.
 ///
 /// Encapsulates a reference to a value and tracks all accesses to it. The only
@@ -44,25 +46,6 @@ where
     }
 }
 
-/// Destructure a `Tracked<_>` into its parts.
-pub fn to_parts<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
-where
-    T: Track,
-{
-    (tracked.inner, tracked.constraint)
-}
-
-/// Create a `Tracked<_>` from its parts.
-pub fn from_parts<'a, T>(
-    inner: &'a T,
-    constraint: Option<&'a T::Constraint>,
-) -> Tracked<'a, T>
-where
-    T: Track,
-{
-    Tracked { inner, constraint }
-}
-
 /// A trackable type.
 ///
 /// This is implemented by types that have an implementation block annoted with
@@ -93,8 +76,21 @@ pub trait Trackable: 'static {
         Self: Track;
 }
 
-/// Workaround for Surface<'a> until GATs are stable.
-pub trait Family<'a> {
-    /// The surface with lifetime.
-    type Out;
+/// Destructure a `Tracked<_>` into its parts.
+pub fn to_parts<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
+where
+    T: Track,
+{
+    (tracked.inner, tracked.constraint)
+}
+
+/// Create a `Tracked<_>` from its parts.
+pub fn from_parts<'a, T>(
+    inner: &'a T,
+    constraint: Option<&'a T::Constraint>,
+) -> Tracked<'a, T>
+where
+    T: Track,
+{
+    Tracked { inner, constraint }
 }

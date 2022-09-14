@@ -55,10 +55,7 @@ pub fn expand(block: &syn::ItemImpl) -> Result<proc_macro2::TokenStream> {
                 true #(&& #tracked_valids)*
             }
 
-            fn surface<'a, 'r>(tracked: &'r Tracked<'a, #ty>) -> &'r Surface<'a>
-            where
-                Self: Track,
-            {
+            fn surface<'a, 'r>(tracked: &'r Tracked<'a, #ty>) -> &'r Surface<'a> {
                 // Safety: Surface is repr(transparent).
                 unsafe { &*(tracked as *const _ as *const _) }
             }

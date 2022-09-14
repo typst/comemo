@@ -55,10 +55,7 @@ const _: () = {
                     && constraint.height.valid(&self.height())
             }
 
-            fn surface<'a, 'r>(tracked: &'r Tracked<'a, Image>) -> &'r Surface<'a>
-            where
-                Self: Track,
-            {
+            fn surface<'a, 'r>(tracked: &'r Tracked<'a, Image>) -> &'r Surface<'a> {
                 // Safety: Surface is repr(transparent).
                 unsafe { &*(tracked as *const _ as *const _) }
             }
