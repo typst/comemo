@@ -1,14 +1,33 @@
 use super::*;
 
 /// Memoize a function.
-pub fn expand(mut func: syn::ItemFn) -> Result<proc_macro2::TokenStream> {
+pub fn expand(item: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
+    // Preprocess and validate the function.
+    let function = prepare(&item)?;
+
+    // Rewrite the function's body to memoize it.
+    process(&function)
+}
+
+/// Details about a function that should be memoized.
+struct Function {
+    item: syn::ItemFn,
+    name: syn::Ident,
+    args: Vec<syn::Ident>,
+    types: Vec<syn::Type>,
+    output: syn::Type,
+}
+
+/// Preprocess and validate a function.
+fn prepare(function: &syn::ItemFn) -> Result<Function> {
     let mut args = vec![];
     let mut types = vec![];
-    for input in &func.sig.inputs {
+
+    for input in &function.sig.inputs {
         let typed = match input {
             syn::FnArg::Typed(typed) => typed,
             syn::FnArg::Receiver(_) => {
-                bail!(input, "methods are not supported")
+                bail!(function, "methods are not supported")
             }
         };
 
@@ -19,32 +38,53 @@ pub fn expand(mut func: syn::ItemFn) -> Result<proc_macro2::TokenStream> {
                 ident,
                 subpat: None,
                 ..
-            }) => ident,
+            }) => ident.clone(),
             pat => bail!(pat, "only simple identifiers are supported"),
         };
 
-        let ty = typed.ty.as_ref();
+        let ty = typed.ty.as_ref().clone();
         args.push(name);
         types.push(ty);
     }
 
+    let output = match &function.sig.output {
+        syn::ReturnType::Default => {
+            bail!(function.sig, "function must have a return type")
+        }
+        syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
+    };
+
+    Ok(Function {
+        item: function.clone(),
+        name: function.sig.ident.clone(),
+        args,
+        types,
+        output,
+    })
+}
+
+/// Rewrite a function's body to memoize it.
+fn process(function: &Function) -> Result<TokenStream> {
     // Construct a tuple from all arguments.
+    let args = &function.args;
     let arg_tuple = quote! { (#(#args,)*) };
 
     // Construct assertions that the arguments fulfill the necessary bounds.
-    let bounds = types.iter().map(|ty| {
+    let bounds = function.types.iter().map(|ty| {
         quote! {
             ::comemo::internal::assert_hashable_or_trackable::<#ty>();
         }
     });
 
     // Construct the inner closure.
-    let body = &func.block;
-    let closure = quote! { |#arg_tuple| #body };
+    let output = &function.output;
+    let body = &function.item.block;
+    let closure = quote! { |#arg_tuple| -> #output #body };
 
     // Adjust the function's body.
-    let name = func.sig.ident.to_string();
-    func.block = parse_quote! { {
+    let mut wrapped = function.item.clone();
+    let name = function.name.to_string();
+    wrapped.block = parse_quote! { {
         #(#bounds;)*
         ::comemo::internal::cached(
             #name,
@@ -53,5 +93,5 @@ pub fn expand(mut func: syn::ItemFn) -> Result<proc_macro2::TokenStream> {
         )
     } };
 
-    Ok(quote! { #func })
+    Ok(quote! { #wrapped })
 }

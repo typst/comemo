@@ -44,7 +44,7 @@ where
 
     let depth = DEPTH.with(|v| v.get());
     let label = if hit { "[hit]" } else { "[miss]" };
-    eprintln!("{depth} {name:<9} {label:<7} {output:?}");
+    eprintln!("{depth} {name:<12} {label:<7} {output:?}");
 
     output
 }

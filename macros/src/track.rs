@@ -1,161 +1,68 @@
 use super::*;
 
 /// Make a type trackable.
-pub fn expand(block: syn::ItemImpl) -> Result<proc_macro2::TokenStream> {
+pub fn expand(block: &syn::ItemImpl) -> Result<TokenStream> {
     let ty = &block.self_ty;
 
-    // Extract and validate the methods.
+    // Preprocess and validate the methods.
     let mut methods = vec![];
     for item in &block.items {
-        methods.push(method(&item)?);
+        methods.push(prepare(&item)?);
     }
 
-    let tracked_valids = methods.iter().map(|method| {
-        let name = &method.name;
-        let args = &method.args;
-        if args.is_empty() {
-            quote! { constraint.#name.valid(&self.#name()) }
-        } else {
-            quote! {
-                constraint.#name
-                    .valid(|(#(#args,)*)| self.#name(#(#args.clone(),)*))
-            }
-        }
-    });
-
-    let tracked_methods = methods.iter().map(|method| {
-        let mut wrapper = method.item.clone();
-        if matches!(wrapper.vis, syn::Visibility::Inherited) {
-            wrapper.vis = parse_quote! { pub(super) };
-        }
-
-        let name = &method.name;
-        let args = &method.args;
-        let set = if args.is_empty() {
-            quote! { constraint.#name.set(&output) }
-        } else {
-            quote! { constraint.#name.set((#(#args,)*), &output) }
-        };
-
-        // Construct assertions that the arguments fulfill the necessary bounds.
-        let bounds = method.types.iter().map(|ty| {
-            quote! {
-                ::comemo::internal::assert_clone_and_partial_eq::<#ty>();
-            }
-        });
-
-        wrapper.block = parse_quote! { {
-            #(#bounds;)*
-            let (value, constraint) = ::comemo::internal::to_parts(self.0);
-            let output = value.#name(#(#args.clone(),)*);
-            if let Some(constraint) = &constraint {
-                #set;
-            }
-            output
-        } };
-
-        wrapper
-    });
-
-    let tracked_fields = methods.iter().map(|method| {
-        let name = &method.name;
-        let types = &method.types;
-        if types.is_empty() {
-            quote! { #name: ::comemo::internal::HashConstraint, }
-        } else {
-            quote! { #name: ::comemo::internal::FuncConstraint<(#(#types,)*)>, }
-        }
-    });
-
-    let join_calls = methods.iter().map(|method| {
-        let name = &method.name;
-        quote! { self.#name.join(&inner.#name); }
-    });
-
-    let track_impl = quote! {
-        use super::*;
-
-        impl ::comemo::Track for #ty {}
-        impl ::comemo::internal::Trackable for #ty {
-            type Constraint = Constraint;
-            type Surface = SurfaceFamily;
-
-            fn valid(&self, constraint: &Self::Constraint) -> bool {
-                true #(&& #tracked_valids)*
-            }
-
-            fn surface<'a, 'r>(tracked: &'r Tracked<'a, #ty>) -> &'r Surface<'a> {
-                // Safety: Surface is repr(transparent).
-                unsafe { &*(tracked as *const _ as *const _) }
-            }
-        }
-
-        pub enum SurfaceFamily {}
-        impl<'a> ::comemo::internal::Family<'a> for SurfaceFamily {
-            type Out = Surface<'a>;
-        }
-
-        #[repr(transparent)]
-        pub struct Surface<'a>(Tracked<'a, #ty>);
-
-        impl Surface<'_> {
-            #(#tracked_methods)*
-        }
-
-        #[derive(Default)]
-        pub struct Constraint {
-            #(#tracked_fields)*
-        }
-
-        impl ::comemo::internal::Join for Constraint {
-            fn join(&self, inner: &Self) {
-                #(#join_calls)*
-            }
-        }
-    };
+    // Produce the necessary items for the type to become trackable.
+    let scope = process(ty, &methods)?;
 
     Ok(quote! {
         #block
-        const _: () = { mod private { #track_impl } };
+        const _: () = { mod private { #scope } };
     })
 }
 
+/// Details about a method that should be tracked.
 struct Method {
     item: syn::ImplItemMethod,
     name: syn::Ident,
     args: Vec<syn::Ident>,
     types: Vec<syn::Type>,
+    kinds: Vec<Kind>,
 }
 
-/// Extract and validate a method.
-fn method(item: &syn::ImplItem) -> Result<Method> {
+/// Whether an argument to a tracked method is bare or by reference.
+enum Kind {
+    Normal,
+    Reference,
+}
+
+/// Preprocess and validate a method.
+fn prepare(item: &syn::ImplItem) -> Result<Method> {
     let method = match item {
         syn::ImplItem::Method(method) => method,
-        _ => bail!(item, "only methods are supported"),
+        _ => bail!(item, "only methods can be tracked"),
     };
 
     match method.vis {
         syn::Visibility::Inherited => {}
         syn::Visibility::Public(_) => {}
-        _ => bail!(method.vis, "only private and public methods are supported"),
+        _ => bail!(method.vis, "only private and public methods can be tracked"),
     }
 
     if let Some(unsafety) = method.sig.unsafety {
-        bail!(unsafety, "unsafe methods are not supported");
+        bail!(unsafety, "unsafe methods cannot be tracked");
     }
 
     if let Some(asyncness) = method.sig.asyncness {
-        bail!(asyncness, "async methods are not supported");
+        bail!(asyncness, "async methods cannot be tracked");
     }
 
     if let Some(constness) = method.sig.constness {
-        bail!(constness, "const methods are not supported");
+        bail!(constness, "const methods cannot be tracked");
     }
 
     for param in method.sig.generics.params.iter() {
         match param {
             syn::GenericParam::Const(_) | syn::GenericParam::Type(_) => {
-                bail!(param, "method must not be generic")
+                bail!(param, "tracked method must not be generic")
             }
             syn::GenericParam::Lifetime(_) => {}
         }
@@ -164,15 +71,20 @@ fn method(item: &syn::ImplItem) -> Result<Method> {
     let mut inputs = method.sig.inputs.iter();
     let receiver = match inputs.next() {
         Some(syn::FnArg::Receiver(recv)) => recv,
-        _ => bail!(method, "method must take self"),
+        _ => bail!(method, "tracked method must take self"),
     };
 
     if receiver.reference.is_none() || receiver.mutability.is_some() {
-        bail!(receiver, "must take self by shared reference");
+        bail!(
+            receiver,
+            "tracked method must take self by shared reference"
+        );
     }
 
     let mut args = vec![];
     let mut types = vec![];
+    let mut kinds = vec![];
+
     for input in inputs {
         let typed = match input {
             syn::FnArg::Typed(typed) => typed,
@@ -190,19 +102,27 @@ fn method(item: &syn::ImplItem) -> Result<Method> {
             pat => bail!(pat, "only simple identifiers are supported"),
         };
 
-        let ty = (*typed.ty).clone();
-        match ty {
-            syn::Type::ImplTrait(_) => bail!(ty, "method must not be generic"),
-            _ => {}
-        }
+        let (ty, kind) = match typed.ty.as_ref() {
+            syn::Type::ImplTrait(ty) => bail!(ty, "tracked methods must not be generic"),
+            syn::Type::Reference(syn::TypeReference { mutability, elem, .. }) => {
+                match mutability {
+                    None => (elem.as_ref().clone(), Kind::Reference),
+                    Some(_) => {
+                        bail!(typed.ty, "tracked methods cannot have mutable parameters")
+                    }
+                }
+            }
+            ty => (ty.clone(), Kind::Normal),
+        };
 
         args.push(name);
         types.push(ty);
+        kinds.push(kind)
     }
 
     match method.sig.output {
         syn::ReturnType::Default => {
-            bail!(method.sig, "method must have a return type")
+            bail!(method.sig, "tracked methods must have a return type")
         }
         syn::ReturnType::Type(..) => {}
     }
@@ -212,5 +132,120 @@ fn method(item: &syn::ImplItem) -> Result<Method> {
         name: method.sig.ident.clone(),
         args,
         types,
+        kinds,
     })
+}
+
+/// Produce the necessary items for a type to become trackable.
+fn process(ty: &syn::Type, methods: &[Method]) -> Result<TokenStream> {
+    let surface = quote! { __ComemoSurface };
+    let family = quote! { __ComemoSurfaceFamily };
+    let constraint = quote! { __ComemoConstraint };
+
+    let validations = methods.iter().map(validation);
+    let wrapper_methods = methods.iter().map(wrapper_method);
+    let constraint_fields = methods.iter().map(constraint_field);
+    let join_calls = methods.iter().map(join_call);
+
+    Ok(quote! {
+        use super::*;
+
+        impl ::comemo::Track for #ty {}
+        impl ::comemo::internal::Trackable for #ty {
+            type Constraint = #constraint;
+            type Surface = #family;
+
+            fn valid(&self, constraint: &Self::Constraint) -> bool {
+                true #(&& #validations)*
+            }
+
+            fn surface<'a, 'r>(
+                tracked: &'r ::comemo::Tracked<'a, #ty>,
+            ) -> &'r #surface<'a> {
+                // Safety: Surface is repr(transparent).
+                unsafe { &*(tracked as *const _ as *const _) }
+            }
+        }
+
+        pub enum #family {}
+        impl<'a> ::comemo::internal::Family<'a> for #family {
+            type Out = #surface<'a>;
+        }
+
+        #[repr(transparent)]
+        pub struct #surface<'a>(::comemo::Tracked<'a, #ty>);
+
+        impl #surface<'_> {
+            #(#wrapper_methods)*
+        }
+
+        #[derive(Default)]
+        pub struct #constraint {
+            #(#constraint_fields)*
+        }
+
+        impl ::comemo::internal::Join for #constraint {
+            fn join(&self, inner: &Self) {
+                #(#join_calls)*
+            }
+        }
+    })
+}
+
+/// Produce a constraint validation for a method.
+fn validation(method: &Method) -> TokenStream {
+    let name = &method.name;
+    let args = &method.args;
+    let prepared = method.args.iter().zip(&method.kinds).map(|(arg, kind)| match kind {
+        Kind::Normal => quote! { #arg.to_owned() },
+        Kind::Reference => quote! { #arg },
+    });
+    quote! {
+        constraint.#name
+            .valid(|(#(#args,)*)| ::comemo::internal::hash(&self.#name(#(#prepared,)*)))
+    }
+}
+
+/// Produce a wrapped surface method.
+fn wrapper_method(method: &Method) -> TokenStream {
+    let mut wrapper = method.item.clone();
+    if matches!(wrapper.vis, syn::Visibility::Inherited) {
+        wrapper.vis = parse_quote! { pub(super) };
+    }
+
+    let name = &method.name;
+    let args = &method.args;
+
+    wrapper.block = parse_quote! { {
+        let input = (#(#args.to_owned(),)*);
+        let (value, constraint) = ::comemo::internal::to_parts(self.0);
+        let output = value.#name(#(#args,)*);
+        if let Some(constraint) = &constraint {
+            constraint.#name.set(input, ::comemo::internal::hash(&output));
+        }
+        output
+    } };
+
+    quote! { #wrapper }
+}
+
+/// Produce a constraint field for a method.
+fn constraint_field(method: &Method) -> TokenStream {
+    let name = &method.name;
+    let types = &method.types;
+    if types.is_empty() {
+        quote! { #name: ::comemo::internal::SoloConstraint, }
+    } else {
+        quote_spanned! { method.item.span() =>
+            #name: ::comemo::internal::MultiConstraint<
+                (#(<#types as ::std::borrow::ToOwned>::Owned,)*)
+            >,
+        }
+    }
+}
+
+/// Produce a join call for a method's constraint.
+fn join_call(method: &Method) -> TokenStream {
+    let name = &method.name;
+    quote! { self.#name.join(&inner.#name); }
 }

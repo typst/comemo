@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use comemo::{Track, Tracked};
 
@@ -49,8 +49,8 @@ impl Storage {
 #[comemo::track]
 impl Storage {
     /// Load a file from storage.
-    fn load(&self, path: PathBuf) -> String {
-        self.files.get(&path).cloned().unwrap_or_default()
+    fn load(&self, path: &str) -> String {
+        self.files.get(Path::new(path)).cloned().unwrap_or_default()
     }
 }
 

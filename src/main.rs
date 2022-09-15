@@ -1,9 +1,12 @@
+#![allow(unused)]
+
 use comemo::{Track, Tracked};
 
 // TODO
-// - Nested tracked call
+// - Bring over Prehashed
 // - Tracked return value from tracked method
-// - Tracked methods with arguments
+// - Memoized methods
+// - Reporting and evicting
 
 fn main() {
     let mut image = Image::new(20, 40);
@@ -47,17 +50,21 @@ const _: () = {
     mod private {
         use super::*;
 
-        impl ::comemo::Track for Image {}
+        impl Track for Image {}
         impl ::comemo::internal::Trackable for Image {
             type Constraint = Constraint;
             type Surface = SurfaceFamily;
 
             fn valid(&self, constraint: &Self::Constraint) -> bool {
-                constraint.width.valid(&self.width())
-                    && constraint.height.valid(&self.height())
+                constraint.width.valid(|()| ::comemo::internal::hash(&self.width()))
+                    && constraint
+                        .height
+                        .valid(|()| ::comemo::internal::hash(&self.height()))
             }
 
-            fn surface<'a, 'r>(tracked: &'r Tracked<'a, Image>) -> &'r Surface<'a> {
+            fn surface<'a, 'r>(
+                tracked: &'r ::comemo::Tracked<'a, Image>,
+            ) -> &'r Surface<'a> {
                 // Safety: Surface is repr(transparent).
                 unsafe { &*(tracked as *const _ as *const _) }
             }
@@ -69,23 +76,25 @@ const _: () = {
         }
 
         #[repr(transparent)]
-        pub struct Surface<'a>(Tracked<'a, Image>);
+        pub struct Surface<'a>(::comemo::Tracked<'a, Image>);
 
-        impl<'a> Surface<'a> {
+        impl Surface<'_> {
             pub(super) fn width(&self) -> u32 {
+                let input = ();
                 let (inner, constraint) = ::comemo::internal::to_parts(self.0);
                 let output = inner.width();
                 if let Some(constraint) = &constraint {
-                    constraint.width.set(&output);
+                    constraint.width.set(input, ::comemo::internal::hash(&output));
                 }
                 output
             }
 
             pub(super) fn height(&self) -> u32 {
+                let input = ();
                 let (inner, constraint) = ::comemo::internal::to_parts(self.0);
                 let output = inner.height();
                 if let Some(constraint) = &constraint {
-                    constraint.height.set(&output);
+                    constraint.height.set(input, ::comemo::internal::hash(&output));
                 }
                 output
             }
@@ -93,8 +102,10 @@ const _: () = {
 
         #[derive(Default)]
         pub struct Constraint {
-            width: ::comemo::internal::HashConstraint,
-            height: ::comemo::internal::HashConstraint,
+            width: ::comemo::internal::SoloConstraint,
+            height: ::comemo::internal::SoloConstraint,
+        }
+
         impl ::comemo::internal::Join for Constraint {
             fn join(&self, outer: &Self) {
                 self.width.join(&outer.width);
