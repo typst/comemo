@@ -1,5 +1,7 @@
+use std::fmt::{self, Debug, Formatter};
 use std::ops::Deref;
 
+use crate::constraint::Join;
 use crate::internal::Family;
 
 /// Tracks accesses to a value.
@@ -12,13 +14,19 @@ where
     T: Track + ?Sized,
 {
     /// A reference to the tracked value.
-    inner: &'a T,
+    value: &'a T,
     /// A constraint that is generated for T by the tracked methods on T's
     /// surface type.
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
     constraint: Option<&'a T::Constraint>,
+}
+
+impl<T: Track + ?Sized> Debug for Tracked<'_, T> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.pad("Tracked(..)")
+    }
 }
 
 // The type `Tracked<T>` automatically dereferences to T's generated surface
@@ -53,14 +61,14 @@ where
 pub trait Track: Trackable {
     /// Start tracking a value.
     fn track(&self) -> Tracked<Self> {
-        Tracked { inner: self, constraint: None }
+        Tracked { value: self, constraint: None }
     }
 }
 
 /// Non-exposed parts of the `Track` trait.
 pub trait Trackable: 'static {
     /// Describes an instance of type.
-    type Constraint: Default + 'static;
+    type Constraint: Default + Join + 'static;
 
     /// The tracked API surface of this type.
     type Surface: for<'a> Family<'a>;
@@ -81,16 +89,16 @@ pub fn to_parts<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
 where
     T: Track,
 {
-    (tracked.inner, tracked.constraint)
+    (tracked.value, tracked.constraint)
 }
 
 /// Create a `Tracked<_>` from its parts.
 pub fn from_parts<'a, T>(
-    inner: &'a T,
+    value: &'a T,
     constraint: Option<&'a T::Constraint>,
 ) -> Tracked<'a, T>
 where
     T: Track,
 {
-    Tracked { inner, constraint }
+    Tracked { value, constraint }
 }

@@ -1,10 +1,11 @@
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt::Debug;
 use std::hash::Hash;
 
 use siphasher::sip128::{Hasher128, SipHasher};
 
+use crate::constraint::Join;
 use crate::input::Input;
 use crate::internal::Family;
 
@@ -26,41 +27,51 @@ where
     let mut hit = true;
     let output = CACHE.with(|cache| {
         cache.lookup::<In, Out>(hash, &input).unwrap_or_else(|| {
+            DEPTH.with(|v| v.set(v.get() + 1));
             let constraint = In::Constraint::default();
-            let value = func(input.track(&constraint));
-            let constrained = Constrained { value: value.clone(), constraint };
-            cache.insert::<In, Out>(hash, constrained);
+            let (tracked, outer) = input.retrack(&constraint);
+            let output = func(tracked);
+            outer.join(&constraint);
+            cache.insert::<In, Out>(hash, Constrained {
+                output: output.clone(),
+                constraint,
+            });
             hit = false;
-            value
+            DEPTH.with(|v| v.set(v.get() - 1));
+            output
         })
     });
 
+    let depth = DEPTH.with(|v| v.get());
     let label = if hit { "[hit]" } else { "[miss]" };
-    eprintln!("{name:<9} {label:<7} {output:?}");
+    eprintln!("{depth} {name:<9} {label:<7} {output:?}");
 
     output
 }
 
 thread_local! {
     /// The global, dynamic cache shared by all memoized functions.
-    pub static CACHE: Cache = Cache::default();
+    static CACHE: Cache = Cache::default();
+
+    /// The current depth of the memoized call stack.
+    static DEPTH: Cell<usize> = Cell::new(0);
 }
 
 /// An untyped cache.
 #[derive(Default)]
-pub struct Cache {
+struct Cache {
     map: RefCell<Vec<Entry>>,
 }
 
 /// An entry in the cache.
 struct Entry {
     hash: u128,
-    output: Box<dyn Any>,
+    constrained: Box<dyn Any>,
 }
 
 /// A value with a constraint.
 struct Constrained<T, C> {
-    value: T,
+    output: T,
     constraint: C,
 }
 
@@ -77,21 +88,21 @@ impl Cache {
             .filter(|entry| entry.hash == hash)
             .map(|entry| {
                 entry
-                    .output
+                    .constrained
                     .downcast_ref::<Constrained<Out, In::Constraint>>()
                     .expect("comemo: a hash collision occurred")
             })
             .find(|output| input.valid(&output.constraint))
-            .map(|output| output.value.clone())
+            .map(|output| output.output.clone())
     }
 
     /// Insert an entry into the cache.
-    fn insert<In, Out>(&self, hash: u128, output: Constrained<Out, In::Constraint>)
+    fn insert<In, Out>(&self, hash: u128, constrained: Constrained<Out, In::Constraint>)
     where
         In: Input,
         Out: 'static,
     {
-        let entry = Entry { hash, output: Box::new(output) };
+        let entry = Entry { hash, constrained: Box::new(constrained) };
         self.map.borrow_mut().push(entry);
     }
 }

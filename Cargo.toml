@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 comemo-macros = { path = "./macros" }
 siphasher = "0.3"
+
+[dev-dependencies]
+unscanny = "0.1"

@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
+use crate::constraint::Join;
 use crate::internal::Family;
 use crate::track::{from_parts, to_parts, Track, Trackable, Tracked};
 
@@ -13,32 +14,35 @@ pub fn assert_hashable_or_trackable<T: Input>() {}
 /// types containing tuples up to length twelve.
 pub trait Input {
     /// Describes an instance of this input.
-    type Constraint: Default + 'static;
+    type Constraint: Default + Join + 'static;
 
-    /// The input with constraints hooked in.
+    /// The input with new constraints hooked in.
     type Tracked: for<'f> Family<'f>;
 
-    /// Hash the _key_ parts of the input.
+    /// The extracted outer constraints.
+    type Outer: Join<Self::Constraint>;
+
+    /// Hash the key parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
 
-    /// Validate the _tracked_ parts of the input.
+    /// Validate the tracked parts of the input.
     fn valid(&self, constraint: &Self::Constraint) -> bool;
 
-    /// Hook up the given constraint to the _tracked_ parts of the input.
-    fn track<'f>(
+    /// Hook up the given constraint to the tracked parts of the input and
+    /// return the result alongside the outer constraints.
+    fn retrack<'f>(
         self,
         constraint: &'f Self::Constraint,
-    ) -> <Self::Tracked as Family<'f>>::Out
+    ) -> (<Self::Tracked as Family<'f>>::Out, Self::Outer)
     where
         Self: 'f;
 }
 
 impl<T: Hash> Input for T {
-    /// No constraint for hashed inputs.
+    // No constraint for hashed inputs.
     type Constraint = ();
-
-    /// The hooked-up type is just `Self`.
     type Tracked = IdFamily<Self>;
+    type Outer = ();
 
     fn key<H: Hasher>(&self, state: &mut H) {
         Hash::hash(self, state);
@@ -48,11 +52,11 @@ impl<T: Hash> Input for T {
         true
     }
 
-    fn track<'f>(self, _: &'f ()) -> Self
+    fn retrack<'f>(self, _: &'f ()) -> (Self, ())
     where
         Self: 'f,
     {
-        self
+        (self, ())
     }
 }
 
@@ -64,11 +68,10 @@ impl<T> Family<'_> for IdFamily<T> {
 }
 
 impl<'a, T: Track> Input for Tracked<'a, T> {
-    /// Forward constraint from `Trackable` implementation.
-    type Constraint = <T as Trackable>::Constraint;
-
-    /// The hooked-up type is `Tracked<'f, T>`.
+    // Forward constraint from `Trackable` implementation.
+    type Constraint = T::Constraint;
     type Tracked = TrackedFamily<T>;
+    type Outer = Option<&'a T::Constraint>;
 
     fn key<H: Hasher>(&self, _: &mut H) {}
 
@@ -76,11 +79,15 @@ impl<'a, T: Track> Input for Tracked<'a, T> {
         Trackable::valid(to_parts(*self).0, constraint)
     }
 
-    fn track<'f>(self, constraint: &'f Self::Constraint) -> Tracked<'f, T>
+    fn retrack<'f>(
+        self,
+        constraint: &'f Self::Constraint,
+    ) -> (Tracked<'f, T>, Option<&'a T::Constraint>)
     where
         Self: 'f,
     {
-        from_parts(to_parts(self).0, Some(constraint))
+        let (value, outer) = to_parts(self);
+        (from_parts(value, Some(constraint)), outer)
     }
 }
 
@@ -98,11 +105,12 @@ pub struct Args<T>(pub T);
 pub struct ArgsFamily<T>(PhantomData<T>);
 
 macro_rules! args_input {
-    ($($param:tt $idx:tt ),*) => {
+    ($($param:tt $alt:tt $idx:tt ),*) => {
         #[allow(unused_variables)]
         impl<$($param: Input),*> Input for Args<($($param,)*)> {
             type Constraint = ($($param::Constraint,)*);
             type Tracked = ArgsFamily<($($param,)*)>;
+            type Outer = ($($param::Outer,)*);
 
             fn key<T: Hasher>(&self, state: &mut T) {
                 $((self.0).$idx.key(state);)*
@@ -112,14 +120,16 @@ macro_rules! args_input {
                 true $(&& (self.0).$idx.valid(&constraint.$idx))*
             }
 
-            fn track<'f>(
+            #[allow(non_snake_case)]
+            fn retrack<'f>(
                 self,
                 constraint: &'f Self::Constraint,
-            ) -> <Self::Tracked as Family<'f>>::Out
+            ) -> (<Self::Tracked as Family<'f>>::Out, Self::Outer)
             where
                 Self: 'f,
             {
-                ($((self.0).$idx.track(&constraint.$idx),)*)
+                $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
+                (($($param.0,)*), ($($param.1,)*))
             }
         }
 
@@ -127,19 +137,26 @@ macro_rules! args_input {
         impl<'f, $($param: Input),*> Family<'f> for ArgsFamily<($($param,)*)> {
             type Out = ($(<$param::Tracked as Family<'f>>::Out,)*);
         }
+
+        #[allow(unused_variables)]
+        impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
+            fn join(&self, constraint: &($($alt,)*)) {
+                $(self.$idx.join(&constraint.$idx);)*
+            }
+        }
     };
 }
 
 args_input! {}
-args_input! { A 0 }
-args_input! { A 0, B 1 }
-args_input! { A 0, B 1, C 2 }
-args_input! { A 0, B 1, C 2, D 3 }
-args_input! { A 0, B 1, C 2, D 3, E 4 }
-args_input! { A 0, B 1, C 2, D 3, E 4, F 5 }
-args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6 }
-args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7 }
-args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8 }
-args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9 }
-args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10 }
-args_input! { A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7, I 8, J 9, K 10, L 11 }
+args_input! { A Z 0 }
+args_input! { A Z 0, B Y 1 }
+args_input! { A Z 0, B Y 1, C X 2 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
+args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }

@@ -93,8 +93,13 @@ const _: () = {
 
         #[derive(Default)]
         pub struct Constraint {
-            width: ::comemo::internal::HashConstraint<u32>,
-            height: ::comemo::internal::HashConstraint<u32>,
+            width: ::comemo::internal::HashConstraint,
+            height: ::comemo::internal::HashConstraint,
+        impl ::comemo::internal::Join for Constraint {
+            fn join(&self, outer: &Self) {
+                self.width.join(&outer.width);
+                self.height.join(&outer.height);
+            }
         }
     }
 };

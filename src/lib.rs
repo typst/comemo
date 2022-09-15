@@ -1,7 +1,7 @@
 //! Tracked memoization.
 
 mod cache;
-mod hash;
+mod constraint;
 mod input;
 mod track;
 
@@ -12,7 +12,9 @@ pub use comemo_macros::{memoize, track};
 #[doc(hidden)]
 pub mod internal {
     pub use crate::cache::cached;
-    pub use crate::hash::HashConstraint;
+    pub use crate::constraint::{
+        assert_clone_and_partial_eq, FuncConstraint, HashConstraint, Join,
+    };
     pub use crate::input::{assert_hashable_or_trackable, Args};
     pub use crate::track::{to_parts, Trackable};
 
