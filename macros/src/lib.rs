@@ -22,7 +22,7 @@ use syn::{parse_quote, Error, Result};
 /// Memoize a pure function.
 #[proc_macro_attribute]
 pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
-    let func = syn::parse_macro_input!(stream as syn::ItemFn);
+    let func = syn::parse_macro_input!(stream as syn::Item);
     memoize::expand(&func)
         .unwrap_or_else(|err| err.to_compile_error())
         .into()
@@ -31,7 +31,7 @@ pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 /// Make a type trackable.
 #[proc_macro_attribute]
 pub fn track(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
-    let block = syn::parse_macro_input!(stream as syn::ItemImpl);
+    let block = syn::parse_macro_input!(stream as syn::Item);
     track::expand(&block)
         .unwrap_or_else(|err| err.to_compile_error())
         .into()

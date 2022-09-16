@@ -3,7 +3,6 @@
 use comemo::{Track, Tracked};
 
 // TODO
-// - Tracked return value from tracked method
 // - Reporting and evicting
 
 fn main() {

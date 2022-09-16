@@ -1,7 +1,15 @@
 use super::*;
 
 /// Memoize a function.
-pub fn expand(item: &syn::ItemFn) -> Result<proc_macro2::TokenStream> {
+pub fn expand(item: &syn::Item) -> Result<proc_macro2::TokenStream> {
+    let item = match item {
+        syn::Item::Fn(item) => item,
+        _ => bail!(
+            item,
+            "`memoize` can only be applied to functions and methods"
+        ),
+    };
+
     // Preprocess and validate the function.
     let function = prepare(&item)?;
 
@@ -37,43 +45,7 @@ fn prepare(function: &syn::ItemFn) -> Result<Function> {
     let mut args = vec![];
 
     for input in &function.sig.inputs {
-        match input {
-            syn::FnArg::Receiver(recv) => {
-                if recv.mutability.is_some() {
-                    bail!(recv, "memoized functions cannot have mutable parameters");
-                }
-
-                args.push(Argument::Receiver(recv.self_token));
-            }
-            syn::FnArg::Typed(typed) => {
-                let name = match typed.pat.as_ref() {
-                    syn::Pat::Ident(syn::PatIdent {
-                        by_ref: None,
-                        mutability: None,
-                        ident,
-                        subpat: None,
-                        ..
-                    }) => ident.clone(),
-                    pat => bail!(pat, "only simple identifiers are supported"),
-                };
-
-                let ty = typed.ty.as_ref().clone();
-                match ty {
-                    syn::Type::Reference(syn::TypeReference {
-                        mutability: Some(_),
-                        ..
-                    }) => {
-                        bail!(
-                            typed.ty,
-                            "memoized functions cannot have mutable parameters"
-                        )
-                    }
-                    _ => {}
-                }
-
-                args.push(Argument::Ident(name));
-            }
-        }
+        args.push(prepare_arg(input)?);
     }
 
     let output = match &function.sig.output {
@@ -88,6 +60,46 @@ fn prepare(function: &syn::ItemFn) -> Result<Function> {
         name: function.sig.ident.clone(),
         args,
         output,
+    })
+}
+
+/// Preprocess a function argument.
+fn prepare_arg(input: &syn::FnArg) -> Result<Argument> {
+    Ok(match input {
+        syn::FnArg::Receiver(recv) => {
+            if recv.mutability.is_some() {
+                bail!(recv, "memoized functions cannot have mutable parameters");
+            }
+
+            Argument::Receiver(recv.self_token)
+        }
+        syn::FnArg::Typed(typed) => {
+            let name = match typed.pat.as_ref() {
+                syn::Pat::Ident(syn::PatIdent {
+                    by_ref: None,
+                    mutability: None,
+                    ident,
+                    subpat: None,
+                    ..
+                }) => ident.clone(),
+                pat => bail!(pat, "only simple identifiers are supported"),
+            };
+
+            let ty = typed.ty.as_ref().clone();
+            match ty {
+                syn::Type::Reference(syn::TypeReference {
+                    mutability: Some(_), ..
+                }) => {
+                    bail!(
+                        typed.ty,
+                        "memoized functions cannot have mutable parameters"
+                    )
+                }
+                _ => {}
+            }
+
+            Argument::Ident(name)
+        }
     })
 }
 
@@ -124,12 +136,14 @@ fn process(function: &Function) -> Result<TokenStream> {
     // Adjust the function's body.
     let mut wrapped = function.item.clone();
     let name = function.name.to_string();
+    let unique = quote! { __ComemoUnique };
+
     wrapped.block = parse_quote! { {
-        struct __ComemoUnique;
+        struct #unique;
         #(#bounds;)*
         ::comemo::internal::memoized(
             #name,
-            ::core::any::TypeId::of::<__ComemoUnique>(),
+            ::core::any::TypeId::of::<#unique>(),
             ::comemo::internal::Args(#arg_tuple),
             #closure,
         )

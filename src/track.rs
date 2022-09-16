@@ -23,18 +23,12 @@ where
     constraint: Option<&'a T::Constraint>,
 }
 
-impl<T: Track + ?Sized> Debug for Tracked<'_, T> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.pad("Tracked(..)")
-    }
-}
-
 // The type `Tracked<T>` automatically dereferences to T's generated surface
 // type. This makes all tracked methods available, but leaves all other ones
 // unaccessible.
 impl<'a, T> Deref for Tracked<'a, T>
 where
-    T: Track,
+    T: Track + ?Sized,
 {
     type Target = <T::Surface as Family<'a>>::Out;
 
@@ -43,14 +37,23 @@ where
     }
 }
 
-impl<'a, T> Copy for Tracked<'a, T> where T: Track {}
+impl<'a, T> Copy for Tracked<'a, T> where T: Track + ?Sized {}
 
 impl<'a, T> Clone for Tracked<'a, T>
 where
-    T: Track,
+    T: Track + ?Sized,
 {
     fn clone(&self) -> Self {
         *self
+    }
+}
+
+impl<T> Debug for Tracked<'_, T>
+where
+    T: Track + ?Sized,
+{
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.pad("Tracked(..)")
     }
 }
 
@@ -87,7 +90,7 @@ pub trait Trackable: 'static {
 /// Destructure a `Tracked<_>` into its parts.
 pub fn to_parts<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
 where
-    T: Track,
+    T: Track + ?Sized,
 {
     (tracked.value, tracked.constraint)
 }
@@ -98,7 +101,7 @@ pub fn from_parts<'a, T>(
     constraint: Option<&'a T::Constraint>,
 ) -> Tracked<'a, T>
 where
-    T: Track,
+    T: Track + ?Sized,
 {
     Tracked { value, constraint }
 }

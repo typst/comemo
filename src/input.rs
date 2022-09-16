@@ -38,7 +38,10 @@ pub trait Input {
         Self: 'f;
 }
 
-impl<T: Hash> Input for T {
+impl<T> Input for T
+where
+    T: Hash,
+{
     // No constraint for hashed inputs.
     type Constraint = ();
     type Tracked = IdFamily<Self>;
@@ -67,7 +70,10 @@ impl<T> Family<'_> for IdFamily<T> {
     type Out = T;
 }
 
-impl<'a, T: Track> Input for Tracked<'a, T> {
+impl<'a, T> Input for Tracked<'a, T>
+where
+    T: Track + ?Sized,
+{
     // Forward constraint from `Trackable` implementation.
     type Constraint = T::Constraint;
     type Tracked = TrackedFamily<T>;
@@ -92,9 +98,12 @@ impl<'a, T: Track> Input for Tracked<'a, T> {
 }
 
 /// Type constructor for `'f -> Tracked<'f, T>`.
-pub struct TrackedFamily<T>(PhantomData<T>);
+pub struct TrackedFamily<T: ?Sized>(PhantomData<T>);
 
-impl<'f, T: Track + 'f> Family<'f> for TrackedFamily<T> {
+impl<'f, T> Family<'f> for TrackedFamily<T>
+where
+    T: Track + ?Sized + 'f,
+{
     type Out = Tracked<'f, T>;
 }
 
