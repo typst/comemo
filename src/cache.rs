@@ -10,16 +10,16 @@ use crate::input::Input;
 use crate::internal::Family;
 
 /// Execute a function or use a cached result for it.
-pub fn cached<In, Out, F>(name: &str, input: In, func: F) -> Out
+pub fn memoized<In, Out, F>(name: &'static str, unique: TypeId, input: In, func: F) -> Out
 where
     In: Input,
     Out: Debug + Clone + 'static,
-    F: for<'f> Fn(<In::Tracked as Family<'f>>::Out) -> Out + 'static,
+    F: for<'f> FnOnce(<In::Tracked as Family<'f>>::Out) -> Out,
 {
     // Compute the hash of the input's key part.
     let hash = {
         let mut state = SipHasher::new();
-        TypeId::of::<F>().hash(&mut state);
+        unique.hash(&mut state);
         input.key(&mut state);
         state.finish128().as_u128()
     };

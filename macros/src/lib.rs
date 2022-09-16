@@ -15,7 +15,7 @@ mod track;
 
 use proc_macro::TokenStream as BoundaryStream;
 use proc_macro2::TokenStream;
-use quote::{quote, quote_spanned};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{parse_quote, Error, Result};
 

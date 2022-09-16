@@ -1,3 +1,5 @@
+use std::hash::Hash;
+
 use comemo::Track;
 
 #[test]
@@ -23,6 +25,11 @@ fn test_kinds() {
     unconditional(tracky); // [Miss] The combined length changed.
     conditional(tracky, "World"); // [Miss] "World" is now shorter.
     ignorant(tracky, "Ignorant"); // [Hit] Doesn't depend on `tester`.
+
+    Taker("Hello".into()).take(); // [Miss] Never called.
+    Taker("Hello".into()).copy(); // [Miss] Never called.
+    Taker("World".into()).take(); // [Miss] Different value.
+    Taker("Hello".into()).take(); // [Hit] Same value.
 }
 
 /// Always accesses data from both arguments.
@@ -37,14 +44,17 @@ fn unconditional(tester: Tracky) -> &'static str {
 
 /// Accesses data from both arguments conditionally.
 #[comemo::memoize]
-fn conditional(tester: Tracky, name: &str) -> String {
-    tester.double_ref(name).to_string()
+fn conditional<T>(tester: Tracky, name: T) -> String
+where
+    T: AsRef<str> + Hash,
+{
+    tester.double_ref(name.as_ref()).to_string()
 }
 
 /// Accesses only data from the second argument.
 #[comemo::memoize]
-fn ignorant(tester: Tracky, name: &str) -> String {
-    tester.arg_ref(name).to_string()
+fn ignorant(tester: Tracky, name: impl AsRef<str> + Hash) -> String {
+    tester.arg_ref(name.as_ref()).to_string()
 }
 
 /// Test with type alias.
@@ -81,3 +91,18 @@ impl Tester {
 /// A non-copy struct that is passed by value to a tracked method.
 #[derive(Clone, PartialEq)]
 struct Heavy(String);
+
+#[derive(Hash)]
+struct Taker(String);
+
+impl Taker {
+    #[comemo::memoize]
+    fn copy(&self) -> String {
+        self.0.clone()
+    }
+
+    #[comemo::memoize]
+    fn take(self) -> String {
+        self.0
+    }
+}

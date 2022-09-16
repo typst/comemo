@@ -6,7 +6,7 @@ use crate::internal::Family;
 use crate::track::{from_parts, to_parts, Track, Trackable, Tracked};
 
 /// Ensure a type is suitable as input.
-pub fn assert_hashable_or_trackable<In: Input>() {}
+pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 
 /// An input to a cached function.
 ///

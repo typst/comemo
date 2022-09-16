@@ -13,7 +13,7 @@ pub use comemo_macros::{memoize, track};
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::cache::cached;
+    pub use crate::cache::memoized;
     pub use crate::constraint::{hash, Join, MultiConstraint, SoloConstraint};
     pub use crate::input::{assert_hashable_or_trackable, Args};
     pub use crate::track::{to_parts, Trackable};

@@ -3,9 +3,7 @@
 use comemo::{Track, Tracked};
 
 // TODO
-// - Bring over Prehashed
 // - Tracked return value from tracked method
-// - Memoized methods
 // - Reporting and evicting
 
 fn main() {
@@ -32,9 +30,11 @@ fn main() {
 
 /// Format the image's size humanly readable.
 fn describe(image: Tracked<Image>) -> &'static str {
-    ::comemo::internal::assert_hashable_or_trackable::<Tracked<Image>>();
-    ::comemo::internal::cached(
+    struct __ComemoUnique;
+    ::comemo::internal::assert_hashable_or_trackable(&image);
+    ::comemo::internal::memoized(
         "describe",
+        ::core::any::TypeId::of::<__ComemoUnique>(),
         ::comemo::internal::Args((image,)),
         |(image,)| {
             if image.width() > 50 || image.height() > 50 {
