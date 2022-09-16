@@ -3,8 +3,10 @@
 mod cache;
 mod constraint;
 mod input;
+mod prehashed;
 mod track;
 
+pub use crate::prehashed::Prehashed;
 pub use crate::track::{Track, Tracked};
 pub use comemo_macros::{memoize, track};
 

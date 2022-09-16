@@ -3,8 +3,8 @@ use comemo::Track;
 #[test]
 fn test_kinds() {
     let mut tester = Tester { data: "Hi".to_string() };
-    let tracky = tester.track();
 
+    let tracky = tester.track();
     unconditional(tracky); // [Miss] Never called.
     unconditional(tracky); // [Hit] Nothing changed.
     conditional(tracky, "World"); // [Miss] The cache is empty.
