@@ -44,7 +44,6 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
 
 /// Details about a method that should be tracked.
 struct Method {
-    name: syn::Ident,
     vis: syn::Visibility,
     sig: syn::Signature,
     args: Vec<syn::Ident>,
@@ -168,7 +167,6 @@ fn prepare_method(vis: syn::Visibility, sig: &syn::Signature) -> Result<Method> 
     }
 
     Ok(Method {
-        name: sig.ident.clone(),
         vis,
         sig: sig.clone(),
         args,
@@ -240,7 +238,7 @@ fn create(
 
 /// Produce a constraint validation for a method.
 fn create_validation(method: &Method) -> TokenStream {
-    let name = &method.name;
+    let name = &method.sig.ident;
     let args = &method.args;
     let prepared = method.args.iter().zip(&method.kinds).map(|(arg, kind)| match kind {
         Kind::Normal => quote! { #arg.to_owned() },
@@ -256,7 +254,7 @@ fn create_validation(method: &Method) -> TokenStream {
 fn create_wrapper(method: &Method) -> TokenStream {
     let vis = &method.vis;
     let sig = &method.sig;
-    let name = &method.name;
+    let name = &method.sig.ident;
     let args = &method.args;
     quote! {
         #vis #sig {
@@ -273,7 +271,7 @@ fn create_wrapper(method: &Method) -> TokenStream {
 
 /// Produce a constraint field for a method.
 fn create_constraint(method: &Method) -> TokenStream {
-    let name = &method.name;
+    let name = &method.sig.ident;
     let types = &method.types;
     if types.is_empty() {
         quote! { #name: ::comemo::internal::SoloConstraint, }
@@ -288,6 +286,6 @@ fn create_constraint(method: &Method) -> TokenStream {
 
 /// Produce a join call for a method's constraint.
 fn create_join(method: &Method) -> TokenStream {
-    let name = &method.name;
+    let name = &method.sig.ident;
     quote! { self.#name.join(&inner.#name); }
 }

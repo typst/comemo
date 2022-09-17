@@ -14,61 +14,6 @@ thread_local! {
     static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
 }
 
-/// Execute a function or use a cached result for it.
-pub fn memoized<In, Out, F>(name: &'static str, id: TypeId, input: In, func: F) -> Out
-where
-    In: Input,
-    Out: Debug + Clone + 'static,
-    F: for<'f> FnOnce(<In::Tracked as Family<'f>>::Out) -> Out,
-{
-    CACHE.with(|cache| {
-        // Compute the hash of the input's key part.
-        let key = {
-            let mut state = SipHasher::new();
-            input.key(&mut state);
-            let hash = state.finish128().as_u128();
-            (id, hash)
-        };
-
-        let mut hit = true;
-        let mut borrowed = cache.borrow_mut();
-
-        // Check whether there is a cached entry.
-        let output = match borrowed.lookup::<In, Out>(key, &input) {
-            Some(output) => output,
-            None => {
-                hit = false;
-                borrowed.depth += 1;
-                drop(borrowed);
-
-                // Point all tracked parts of the input to these constraints.
-                let constraint = In::Constraint::default();
-                let (tracked, outer) = input.retrack(&constraint);
-
-                // Execute the function with the new constraints hooked in.
-                let output = func(tracked);
-
-                // Add the new constraints to the previous outer ones.
-                outer.join(&constraint);
-
-                // Insert the result into the cache.
-                borrowed = cache.borrow_mut();
-                borrowed.insert::<In, Out>(key, constraint, output.clone());
-                borrowed.depth -= 1;
-
-                output
-            }
-        };
-
-        // Print details.
-        let depth = borrowed.depth;
-        let label = if hit { "[hit]" } else { "[miss]" };
-        eprintln!("{depth} {name:<12} {label:<7} {output:?}");
-
-        output
-    })
-}
-
 /// Configure the caching behaviour.
 pub fn config(config: Config) {
     CACHE.with(|cache| cache.borrow_mut().config = config);
@@ -107,6 +52,50 @@ pub fn evict() {
             !entries.is_empty()
         });
     });
+}
+
+/// Execute a function or use a cached result for it.
+pub fn memoized<In, Out, F>(id: TypeId, input: In, func: F) -> Out
+where
+    In: Input,
+    Out: Debug + Clone + 'static,
+    F: for<'f> FnOnce(<In::Tracked as Family<'f>>::Out) -> Out,
+{
+    CACHE.with(|cache| {
+        // Compute the hash of the input's key part.
+        let key = {
+            let mut state = SipHasher::new();
+            input.key(&mut state);
+            let hash = state.finish128().as_u128();
+            (id, hash)
+        };
+
+        // Check if there is a cached output.
+        let mut borrow = cache.borrow_mut();
+        if let Some(output) = borrow.lookup::<In, Out>(key, &input) {
+            return output;
+        }
+
+        borrow.depth += 1;
+        drop(borrow);
+
+        // Point all tracked parts of the input to these constraints.
+        let constraint = In::Constraint::default();
+        let (tracked, outer) = input.retrack(&constraint);
+
+        // Execute the function with the new constraints hooked in.
+        let output = func(tracked);
+
+        // Add the new constraints to the previous outer ones.
+        outer.join(&constraint);
+
+        // Insert the result into the cache.
+        borrow = cache.borrow_mut();
+        borrow.insert::<In, Out>(key, constraint, output.clone());
+        borrow.depth -= 1;
+
+        output
+    })
 }
 
 /// The global cache.
@@ -189,6 +178,7 @@ impl Entry {
     {
         let Constrained::<In::Constraint, Out> { constraint, output } =
             self.constrained.downcast_ref().expect("wrong entry type");
+
         input.valid(constraint).then(|| {
             self.age = 0;
             output.clone()

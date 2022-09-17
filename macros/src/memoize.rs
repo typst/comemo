@@ -20,7 +20,6 @@ pub fn expand(item: &syn::Item) -> Result<proc_macro2::TokenStream> {
 /// Details about a function that should be memoized.
 struct Function {
     item: syn::ItemFn,
-    name: syn::Ident,
     args: Vec<Argument>,
     output: syn::Type,
 }
@@ -55,12 +54,7 @@ fn prepare(function: &syn::ItemFn) -> Result<Function> {
         syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
     };
 
-    Ok(Function {
-        item: function.clone(),
-        name: function.sig.ident.clone(),
-        args,
-        output,
-    })
+    Ok(Function { item: function.clone(), args, output })
 }
 
 /// Preprocess a function argument.
@@ -135,14 +129,12 @@ fn process(function: &Function) -> Result<TokenStream> {
 
     // Adjust the function's body.
     let mut wrapped = function.item.clone();
-    let name = function.name.to_string();
     let unique = quote! { __ComemoUnique };
 
     wrapped.block = parse_quote! { {
         struct #unique;
         #(#bounds;)*
         ::comemo::internal::memoized(
-            #name,
             ::core::any::TypeId::of::<#unique>(),
             ::comemo::internal::Args(#arg_tuple),
             #closure,

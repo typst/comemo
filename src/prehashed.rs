@@ -15,7 +15,7 @@ use siphasher::sip128::{Hasher128, SipHasher};
 /// # `Hash` and `Eq`
 /// When implementing both `Hash` and `Eq`, the following property [must
 /// hold][property]:
-/// ```
+/// ```text
 /// a == b -> hash(a) == hash(b)
 /// ```
 /// The inverse implication does not follow from this immediately. However,
