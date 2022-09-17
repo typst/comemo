@@ -5,9 +5,9 @@ use comemo::{Track, Tracked};
 #[test]
 fn test_trait() {
     let loader: &dyn Loader = &StaticLoader;
-    load_file(loader.track(), Path::new("hi.rs"));
-    load_file(loader.track(), Path::new("hi.rs"));
-    load_file(loader.track(), Path::new("bye.rs"));
+    load_file(loader.track(), Path::new("hi.rs")); // [Miss] Never called.
+    load_file(loader.track(), Path::new("hi.rs")); // [Hit] Stayed the same.
+    load_file(loader.track(), Path::new("bye.rs")); // [Miss] Different path.
 }
 
 /// Load a file from the loader.

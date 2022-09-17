@@ -1,9 +1,4 @@
-#![allow(unused)]
-
 use comemo::{Track, Tracked};
-
-// TODO
-// - Reporting and evicting
 
 fn main() {
     let mut image = Image::new(20, 40);

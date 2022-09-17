@@ -6,6 +6,7 @@ mod input;
 mod prehashed;
 mod track;
 
+pub use crate::cache::{config, evict, Config};
 pub use crate::prehashed::Prehashed;
 pub use crate::track::{Track, Tracked};
 pub use comemo_macros::{memoize, track};

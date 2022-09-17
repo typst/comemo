@@ -1,7 +1,7 @@
 use std::any::{Any, TypeId};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Debug;
-use std::hash::Hash;
 
 use siphasher::sip128::{Hasher128, SipHasher};
 
@@ -9,100 +9,189 @@ use crate::constraint::Join;
 use crate::input::Input;
 use crate::internal::Family;
 
+thread_local! {
+    /// The global, dynamic cache shared by all memoized functions.
+    static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
+}
+
 /// Execute a function or use a cached result for it.
-pub fn memoized<In, Out, F>(name: &'static str, unique: TypeId, input: In, func: F) -> Out
+pub fn memoized<In, Out, F>(name: &'static str, id: TypeId, input: In, func: F) -> Out
 where
     In: Input,
     Out: Debug + Clone + 'static,
     F: for<'f> FnOnce(<In::Tracked as Family<'f>>::Out) -> Out,
 {
-    // Compute the hash of the input's key part.
-    let hash = {
-        let mut state = SipHasher::new();
-        unique.hash(&mut state);
-        input.key(&mut state);
-        state.finish128().as_u128()
-    };
+    CACHE.with(|cache| {
+        // Compute the hash of the input's key part.
+        let key = {
+            let mut state = SipHasher::new();
+            input.key(&mut state);
+            let hash = state.finish128().as_u128();
+            (id, hash)
+        };
 
-    let mut hit = true;
-    let output = CACHE.with(|cache| {
-        cache.lookup::<In, Out>(hash, &input).unwrap_or_else(|| {
-            DEPTH.with(|v| v.set(v.get() + 1));
-            let constraint = In::Constraint::default();
-            let (tracked, outer) = input.retrack(&constraint);
-            let output = func(tracked);
-            outer.join(&constraint);
-            cache.insert::<In, Out>(hash, Constrained {
-                output: output.clone(),
-                constraint,
+        let mut hit = true;
+        let mut borrowed = cache.borrow_mut();
+
+        // Check whether there is a cached entry.
+        let output = match borrowed.lookup::<In, Out>(key, &input) {
+            Some(output) => output,
+            None => {
+                hit = false;
+                borrowed.depth += 1;
+                drop(borrowed);
+
+                // Point all tracked parts of the input to these constraints.
+                let constraint = In::Constraint::default();
+                let (tracked, outer) = input.retrack(&constraint);
+
+                // Execute the function with the new constraints hooked in.
+                let output = func(tracked);
+
+                // Add the new constraints to the previous outer ones.
+                outer.join(&constraint);
+
+                // Insert the result into the cache.
+                borrowed = cache.borrow_mut();
+                borrowed.insert::<In, Out>(key, constraint, output.clone());
+                borrowed.depth -= 1;
+
+                output
+            }
+        };
+
+        // Print details.
+        let depth = borrowed.depth;
+        let label = if hit { "[hit]" } else { "[miss]" };
+        eprintln!("{depth} {name:<12} {label:<7} {output:?}");
+
+        output
+    })
+}
+
+/// Configure the caching behaviour.
+pub fn config(config: Config) {
+    CACHE.with(|cache| cache.borrow_mut().config = config);
+}
+
+/// Configuration for caching behaviour.
+pub struct Config {
+    max_age: u32,
+}
+
+impl Config {
+    /// The maximum number of evictions an entry can survive without having been
+    /// used in between.
+    pub fn max_age(mut self, age: u32) -> Self {
+        self.max_age = age;
+        self
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { max_age: 5 }
+    }
+}
+
+/// Evict cache entries that haven't been used in a while.
+pub fn evict() {
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let max = cache.config.max_age;
+        cache.map.retain(|_, entries| {
+            entries.retain_mut(|entry| {
+                entry.age += 1;
+                entry.age <= max
             });
-            hit = false;
-            DEPTH.with(|v| v.set(v.get() - 1));
-            output
-        })
+            !entries.is_empty()
+        });
     });
-
-    let depth = DEPTH.with(|v| v.get());
-    let label = if hit { "[hit]" } else { "[miss]" };
-    eprintln!("{depth} {name:<12} {label:<7} {output:?}");
-
-    output
 }
 
-thread_local! {
-    /// The global, dynamic cache shared by all memoized functions.
-    static CACHE: Cache = Cache::default();
-
-    /// The current depth of the memoized call stack.
-    static DEPTH: Cell<usize> = Cell::new(0);
-}
-
-/// An untyped cache.
+/// The global cache.
 #[derive(Default)]
 struct Cache {
-    map: RefCell<Vec<Entry>>,
-}
-
-/// An entry in the cache.
-struct Entry {
-    hash: u128,
-    constrained: Box<dyn Any>,
-}
-
-/// A value with a constraint.
-struct Constrained<T, C> {
-    output: T,
-    constraint: C,
+    /// Maps from function IDs + hashes to memoized results.
+    map: HashMap<(TypeId, u128), Vec<Entry>>,
+    /// The current depth of the memoized call stack.
+    depth: usize,
+    /// The current configuration.
+    config: Config,
 }
 
 impl Cache {
     /// Look for a matching entry in the cache.
-    fn lookup<In, Out>(&self, hash: u128, input: &In) -> Option<Out>
+    fn lookup<In, Out>(&mut self, key: (TypeId, u128), input: &In) -> Option<Out>
     where
         In: Input,
         Out: Clone + 'static,
     {
         self.map
-            .borrow()
-            .iter()
-            .filter(|entry| entry.hash == hash)
-            .map(|entry| {
-                entry
-                    .constrained
-                    .downcast_ref::<Constrained<Out, In::Constraint>>()
-                    .expect("comemo: a hash collision occurred")
-            })
-            .find(|output| input.valid(&output.constraint))
-            .map(|output| output.output.clone())
+            .get_mut(&key)?
+            .iter_mut()
+            .find_map(|entry| entry.lookup::<In, Out>(input))
     }
 
     /// Insert an entry into the cache.
-    fn insert<In, Out>(&self, hash: u128, constrained: Constrained<Out, In::Constraint>)
+    fn insert<In, Out>(
+        &mut self,
+        key: (TypeId, u128),
+        constraint: In::Constraint,
+        output: Out,
+    ) where
+        In: Input,
+        Out: 'static,
+    {
+        self.map
+            .entry(key)
+            .or_default()
+            .push(Entry::new::<In, Out>(constraint, output));
+    }
+}
+
+/// A memoized result.
+struct Entry {
+    /// The memoized function's constrained output.
+    ///
+    /// This is of type `Constrained<In::Constraint, Out>`.
+    constrained: Box<dyn Any>,
+    /// How many evictions have passed since the entry has been last used.
+    age: u32,
+}
+
+/// A value with a constraint.
+struct Constrained<C, T> {
+    /// The constraint which must be fulfilled for the output to be used.
+    constraint: C,
+    /// The memoized function's output.
+    output: T,
+}
+
+impl Entry {
+    /// Create a new entry.
+    fn new<In, Out>(constraint: In::Constraint, output: Out) -> Self
     where
         In: Input,
         Out: 'static,
     {
-        let entry = Entry { hash, constrained: Box::new(constrained) };
-        self.map.borrow_mut().push(entry);
+        Self {
+            constrained: Box::new(Constrained { constraint, output }),
+            age: 0,
+        }
+    }
+
+    /// Return the entry's output if it is valid for the given input.
+    fn lookup<In, Out>(&mut self, input: &In) -> Option<Out>
+    where
+        In: Input,
+        Out: Clone + 'static,
+    {
+        let Constrained::<In::Constraint, Out> { constraint, output } =
+            self.constrained.downcast_ref().expect("wrong entry type");
+        input.valid(constraint).then(|| {
+            self.age = 0;
+            output.clone()
+        })
     }
 }

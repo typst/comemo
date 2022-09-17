@@ -50,7 +50,7 @@ fn prepare(function: &syn::ItemFn) -> Result<Function> {
 
     let output = match &function.sig.output {
         syn::ReturnType::Default => {
-            bail!(function.sig, "function must have a return type")
+            bail!(function.sig, "memoized function must have a return type")
         }
         syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
     };
