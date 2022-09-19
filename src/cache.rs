@@ -14,12 +14,12 @@ thread_local! {
     static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
 }
 
-/// Configure the caching behaviour.
+/// Configure the caching and eviction behaviour.
 pub fn config(config: Config) {
     CACHE.with(|cache| cache.borrow_mut().config = config);
 }
 
-/// Configuration for caching behaviour.
+/// Configuration for caching and eviction behaviour.
 pub struct Config {
     max_age: u32,
 }
@@ -27,6 +27,8 @@ pub struct Config {
 impl Config {
     /// The maximum number of evictions an entry can survive without having been
     /// used in between.
+    ///
+    /// Default: 5
     pub fn max_age(mut self, age: u32) -> Self {
         self.max_age = age;
         self
@@ -40,6 +42,10 @@ impl Default for Config {
 }
 
 /// Evict cache entries that haven't been used in a while.
+///
+/// The eviction behaviour can be customized with the [`config`] function.
+/// Currently, comemo does not evict the cache automatically (this might
+/// change in the future).
 pub fn evict() {
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();

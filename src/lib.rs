@@ -1,4 +1,20 @@
-//! Tracked memoization.
+/*!
+Memoization on steroids.
+
+A _memoized_ function caches its return values so that it only needs to be
+executed once per set of unique arguments.
+While this only works for _pure_ functions (functions that don't have side
+effects), it can improve performance in many computations.
+
+However, memoization is not a silver bullet.
+In many cases, the cache hit rate isn't all that great because arguments are
+ever so slightly different.
+This is where comemo comes into play:
+It let's you reuse a function's output even when called with
+_different_ arguments as long as the difference is not observed by the function.
+It achieves this by carefully tracking which parts of an argument were actually
+accessed during the invocation of a memoized function.
+*/
 
 mod cache;
 mod constraint;

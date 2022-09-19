@@ -19,7 +19,7 @@ use siphasher::sip128::{Hasher128, SipHasher};
 /// a == b -> hash(a) == hash(b)
 /// ```
 /// The inverse implication does not follow from this immediately. However,
-/// _comemo_ uses high-quality 128 bit hashes in all places. This reduces the
+/// comemo uses high-quality 128 bit hashes in all places. This reduces the
 /// risk of a hash collision to an absolute minimum. Therefore, this trait
 /// additionally provides `PartialEq` and `Eq` implementations that compare by
 /// hash instead of by value.
