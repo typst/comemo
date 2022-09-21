@@ -194,7 +194,10 @@ fn create(
     Ok(quote! {
         use super::*;
 
+        #[doc(hidden)]
         impl ::comemo::Track for #ty {}
+
+        #[doc(hidden)]
         impl ::comemo::internal::Trackable for #ty {
             type Constraint = #constraint;
             type Surface = #family;

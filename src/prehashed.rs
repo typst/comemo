@@ -12,15 +12,9 @@ use siphasher::sip128::{Hasher128, SipHasher};
 /// functions. Especially recursive structures like trees benefit from
 /// intermediate prehashed nodes.
 ///
-/// # `Hash` and `Eq`
-/// When implementing both `Hash` and `Eq`, the following property [must
-/// hold][property]:
-/// ```text
-/// a == b -> hash(a) == hash(b)
-/// ```
-/// The inverse implication does not follow from this immediately. However,
-/// comemo uses high-quality 128 bit hashes in all places. This reduces the
-/// risk of a hash collision to an absolute minimum. Therefore, this trait
+/// # Equality
+/// Because comemo uses high-quality 128 bit hashes in all places, the risk of a
+/// hash collision is reduced to an absolute minimum. Therefore, this trait
 /// additionally provides `PartialEq` and `Eq` implementations that compare by
 /// hash instead of by value.
 ///
@@ -101,9 +95,9 @@ impl<T: Default + Hash + 'static> Default for Prehashed<T> {
     }
 }
 
-impl<T: Eq + ?Sized> Eq for Prehashed<T> {}
+impl<T: ?Sized> Eq for Prehashed<T> {}
 
-impl<T: PartialEq + ?Sized> PartialEq for Prehashed<T> {
+impl<T: ?Sized> PartialEq for Prehashed<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
