@@ -32,6 +32,7 @@ where
 {
     type Target = <T::Surface as Family<'a>>::Out;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         T::surface(self)
     }
@@ -43,6 +44,7 @@ impl<'a, T> Clone for Tracked<'a, T>
 where
     T: Track + ?Sized,
 {
+    #[inline]
     fn clone(&self) -> Self {
         *self
     }
@@ -52,6 +54,7 @@ impl<T> Debug for Tracked<'_, T>
 where
     T: Track + ?Sized,
 {
+    #[inline]
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.pad("Tracked(..)")
     }
@@ -63,6 +66,7 @@ where
 /// [`#[track]`](macro@crate::track).
 pub trait Track: Trackable {
     /// Start tracking a value.
+    #[inline]
     fn track(&self) -> Tracked<Self> {
         Tracked { value: self, constraint: None }
     }
@@ -71,7 +75,7 @@ pub trait Track: Trackable {
 /// Non-exposed parts of the `Track` trait.
 pub trait Trackable: 'static {
     /// Describes an instance of type.
-    type Constraint: Default + Join + 'static;
+    type Constraint: Default + Debug + Join + 'static;
 
     /// The tracked API surface of this type.
     type Surface: for<'a> Family<'a>;
@@ -88,6 +92,7 @@ pub trait Trackable: 'static {
 }
 
 /// Destructure a `Tracked<_>` into its parts.
+#[inline]
 pub fn to_parts<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
 where
     T: Track + ?Sized,
@@ -96,6 +101,7 @@ where
 }
 
 /// Create a `Tracked<_>` from its parts.
+#[inline]
 pub fn from_parts<'a, T>(
     value: &'a T,
     constraint: Option<&'a T::Constraint>,

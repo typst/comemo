@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
@@ -6,6 +7,7 @@ use crate::internal::Family;
 use crate::track::{from_parts, to_parts, Track, Trackable, Tracked};
 
 /// Ensure a type is suitable as input.
+#[inline]
 pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 
 /// An input to a cached function.
@@ -14,7 +16,7 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// types containing tuples up to length twelve.
 pub trait Input {
     /// Describes an instance of this input.
-    type Constraint: Default + Join + 'static;
+    type Constraint: Default + Debug + Join + 'static;
 
     /// The input with new constraints hooked in.
     type Tracked: for<'f> Family<'f>;
@@ -47,14 +49,17 @@ where
     type Tracked = IdFamily<Self>;
     type Outer = ();
 
+    #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
         Hash::hash(self, state);
     }
 
+    #[inline]
     fn valid(&self, _: &()) -> bool {
         true
     }
 
+    #[inline]
     fn retrack<'f>(self, _: &'f ()) -> (Self, ())
     where
         Self: 'f,
@@ -79,12 +84,15 @@ where
     type Tracked = TrackedFamily<T>;
     type Outer = Option<&'a T::Constraint>;
 
+    #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
+    #[inline]
     fn valid(&self, constraint: &Self::Constraint) -> bool {
         Trackable::valid(to_parts(*self).0, constraint)
     }
 
+    #[inline]
     fn retrack<'f>(
         self,
         constraint: &'f Self::Constraint,
@@ -121,17 +129,20 @@ macro_rules! args_input {
             type Tracked = ArgsFamily<($($param,)*)>;
             type Outer = ($($param::Outer,)*);
 
+            #[inline]
             fn key<T: Hasher>(&self, state: &mut T) {
                 $((self.0).$idx.key(state);)*
             }
 
+            #[inline]
             fn valid(&self, constraint: &Self::Constraint) -> bool {
                 true $(&& (self.0).$idx.valid(&constraint.$idx))*
             }
 
             #[allow(non_snake_case)]
+            #[inline]
             fn retrack<'f>(
-                self,
+                            self,
                 constraint: &'f Self::Constraint,
             ) -> (<Self::Tracked as Family<'f>>::Out, Self::Outer)
             where
@@ -149,6 +160,7 @@ macro_rules! args_input {
 
         #[allow(unused_variables)]
         impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
+            #[inline]
             fn join(&self, constraint: &($($alt,)*)) {
                 $(self.$idx.join(&constraint.$idx);)*
             }

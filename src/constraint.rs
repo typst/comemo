@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::fmt::Debug;
 use std::hash::Hash;
 
 use siphasher::sip128::{Hasher128, SipHasher};
@@ -10,6 +11,7 @@ pub trait Join<T = Self> {
 }
 
 impl<T: Join> Join<T> for Option<&T> {
+    #[inline]
     fn join(&self, inner: &T) {
         if let Some(outer) = self {
             outer.join(inner);
@@ -18,18 +20,28 @@ impl<T: Join> Join<T> for Option<&T> {
 }
 
 /// Defines a constraint for a tracked method without arguments.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SoloConstraint {
     cell: Cell<Option<u128>>,
 }
 
 impl SoloConstraint {
     /// Set the constraint for the value.
+    #[inline]
+    #[track_caller]
     pub fn set(&self, _: (), hash: u128) {
-        self.cell.set(Some(hash));
+        // If there's already a constraint, it must match.
+        // This assertion can fail if a tracked function isn't pure
+        // (which violates comemo's contract).
+        if let Some(existing) = self.cell.get() {
+            check(hash, existing);
+        } else {
+            self.cell.set(Some(hash));
+        }
     }
 
     /// Whether the value fulfills the constraint.
+    #[inline]
     pub fn valid<F>(&self, f: F) -> bool
     where
         F: Fn(()) -> u128,
@@ -39,15 +51,16 @@ impl SoloConstraint {
 }
 
 impl Join for SoloConstraint {
+    #[inline]
     fn join(&self, inner: &Self) {
-        let inner = inner.cell.get();
-        if inner.is_some() {
-            self.cell.set(inner);
+        if let Some(hash) = inner.cell.get() {
+            self.set((), hash);
         }
     }
 }
 
 /// Defines a constraint for a tracked method with arguments.
+#[derive(Debug)]
 pub struct MultiConstraint<In> {
     calls: RefCell<Vec<(In, u128)>>,
 }
@@ -57,32 +70,38 @@ where
     In: Clone + PartialEq,
 {
     /// Enter a constraint for a pair of inputs and output.
+    #[inline]
+    #[track_caller]
     pub fn set(&self, input: In, hash: u128) {
         let mut calls = self.calls.borrow_mut();
-        if calls.iter().all(|item| item.0 != input) {
+        if let Some(item) = calls.iter().find(|item| item.0 == input) {
+            check(item.1, hash);
+        } else {
             calls.push((input, hash));
         }
     }
 
     /// Whether the method satisfies as all input-output pairs.
+    #[inline]
     pub fn valid<F>(&self, f: F) -> bool
     where
         F: Fn(&In) -> u128,
     {
-        let calls = self.calls.borrow();
-        calls.iter().all(|(input, hash)| *hash == f(input))
+        self.calls.borrow().iter().all(|(input, hash)| *hash == f(input))
     }
 }
 
 impl<In> Join for MultiConstraint<In>
 where
-    In: Clone + PartialEq,
+    In: Debug + Clone + PartialEq,
 {
+    #[inline]
     fn join(&self, inner: &Self) {
         let mut calls = self.calls.borrow_mut();
-        let inner = inner.calls.borrow();
-        for (input, hash) in inner.iter() {
-            if calls.iter().all(|item| &item.0 != input) {
+        for (input, hash) in inner.calls.borrow().iter() {
+            if let Some(item) = calls.iter().find(|item| &item.0 == input) {
+                check(item.1, *hash);
+            } else {
                 calls.push((input.clone(), *hash));
             }
         }
@@ -90,12 +109,26 @@ where
 }
 
 impl<In> Default for MultiConstraint<In> {
+    #[inline]
     fn default() -> Self {
         Self { calls: RefCell::new(vec![]) }
     }
 }
 
+/// Check for a constraint violation.
+#[inline]
+#[track_caller]
+fn check(left: u128, right: u128) {
+    if left != right {
+        panic!(
+            "comemo: found conflicting constraints. \
+             is this tracked function pure?"
+        )
+    }
+}
+
 /// Produce a 128-bit hash of a value.
+#[inline]
 pub fn hash<T: Hash>(value: &T) -> u128 {
     let mut state = SipHasher::new();
     value.hash(&mut state);

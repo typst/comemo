@@ -38,17 +38,12 @@ impl<T: Hash + 'static> Prehashed<T> {
     /// Compute an item's hash and wrap it.
     #[inline]
     pub fn new(item: T) -> Self {
-        Self {
-            hash: {
-                // Also hash the TypeId because the type might be converted
-                // through an unsized coercion.
-                let mut state = SipHasher::new();
-                item.type_id().hash(&mut state);
-                item.hash(&mut state);
-                state.finish128().as_u128()
-            },
-            item,
-        }
+        // Also hash the TypeId because the type might be converted
+        // through an unsized coercion.
+        let mut state = SipHasher::new();
+        item.type_id().hash(&mut state);
+        item.hash(&mut state);
+        Self { hash: state.finish128().as_u128(), item }
     }
 
     /// Return the wrapped value.

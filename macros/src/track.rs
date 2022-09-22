@@ -226,7 +226,7 @@ fn create(
             #(#wrapper_methods)*
         }
 
-        #[derive(Default)]
+        #[derive(Debug, Default)]
         pub struct #constraint {
             #(#constraint_fields)*
         }
@@ -260,6 +260,7 @@ fn create_wrapper(method: &Method) -> TokenStream {
     let name = &method.sig.ident;
     let args = &method.args;
     quote! {
+        #[track_caller]
         #vis #sig {
             let input = (#(#args.to_owned(),)*);
             let (value, constraint) = ::comemo::internal::to_parts(self.0);

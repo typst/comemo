@@ -89,7 +89,7 @@ impl Tester {
 }
 
 /// A non-copy struct that is passed by value to a tracked method.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Heavy(String);
 
 #[derive(Hash)]

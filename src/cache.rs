@@ -14,52 +14,6 @@ thread_local! {
     static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
 }
 
-/// Configure the caching and eviction behaviour.
-pub fn config(config: Config) {
-    CACHE.with(|cache| cache.borrow_mut().config = config);
-}
-
-/// Configuration for caching and eviction behaviour.
-pub struct Config {
-    max_age: u32,
-}
-
-impl Config {
-    /// The maximum number of evictions an entry can survive without having been
-    /// used in between.
-    ///
-    /// Default: 5
-    pub fn max_age(mut self, age: u32) -> Self {
-        self.max_age = age;
-        self
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self { max_age: 5 }
-    }
-}
-
-/// Evict cache entries that haven't been used in a while.
-///
-/// The eviction behaviour can be customized with the [`config`] function.
-/// Currently, comemo does not evict the cache automatically (this might
-/// change in the future).
-pub fn evict() {
-    CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let max = cache.config.max_age;
-        cache.map.retain(|_, entries| {
-            entries.retain_mut(|entry| {
-                entry.age += 1;
-                entry.age <= max
-            });
-            !entries.is_empty()
-        });
-    });
-}
-
 /// Execute a function or use a cached result for it.
 pub fn memoized<In, Out, F>(id: TypeId, input: In, func: F) -> Out
 where
@@ -76,32 +30,34 @@ where
             (id, hash)
         };
 
-        // Check if there is a cached output.
-        let mut borrow = cache.borrow_mut();
-        if let Some(output) = borrow.lookup::<In, Out>(key, &input) {
-            return output;
-        }
-
-        borrow.depth += 1;
-        drop(borrow);
-
         // Point all tracked parts of the input to these constraints.
         let constraint = In::Constraint::default();
-        let (tracked, outer) = input.retrack(&constraint);
+
+        // Check if there is a cached output.
+        if let Some(constrained) = cache.borrow().lookup::<In, Out>(key, &input) {
+            // Add the cached constraints to the outer ones.
+            let (_, outer) = input.retrack(&constraint);
+            outer.join(&constrained.constraint);
+            return constrained.output.clone();
+        }
 
         // Execute the function with the new constraints hooked in.
-        let output = func(tracked);
+        let (input, outer) = input.retrack(&constraint);
+        let output = func(input);
 
-        // Add the new constraints to the previous outer ones.
+        // Add the new constraints to the outer ones.
         outer.join(&constraint);
 
         // Insert the result into the cache.
-        borrow = cache.borrow_mut();
-        borrow.insert::<In, Out>(key, constraint, output.clone());
-        borrow.depth -= 1;
+        cache.borrow_mut().insert::<In, Out>(key, constraint, output.clone());
 
         output
     })
+}
+
+/// Completely clear the cache.
+pub fn clear() {
+    CACHE.with(|cache| cache.borrow_mut().map.clear());
 }
 
 /// The global cache.
@@ -109,22 +65,22 @@ where
 struct Cache {
     /// Maps from function IDs + hashes to memoized results.
     map: HashMap<(TypeId, u128), Vec<Entry>>,
-    /// The current depth of the memoized call stack.
-    depth: usize,
-    /// The current configuration.
-    config: Config,
 }
 
 impl Cache {
     /// Look for a matching entry in the cache.
-    fn lookup<In, Out>(&mut self, key: (TypeId, u128), input: &In) -> Option<Out>
+    fn lookup<In, Out>(
+        &self,
+        key: (TypeId, u128),
+        input: &In,
+    ) -> Option<&Constrained<In::Constraint, Out>>
     where
         In: Input,
         Out: Clone + 'static,
     {
         self.map
-            .get_mut(&key)?
-            .iter_mut()
+            .get(&key)?
+            .iter()
             .find_map(|entry| entry.lookup::<In, Out>(input))
     }
 
@@ -151,8 +107,6 @@ struct Entry {
     ///
     /// This is of type `Constrained<In::Constraint, Out>`.
     constrained: Box<dyn Any>,
-    /// How many evictions have passed since the entry has been last used.
-    age: u32,
 }
 
 /// A value with a constraint.
@@ -172,22 +126,18 @@ impl Entry {
     {
         Self {
             constrained: Box::new(Constrained { constraint, output }),
-            age: 0,
         }
     }
 
     /// Return the entry's output if it is valid for the given input.
-    fn lookup<In, Out>(&mut self, input: &In) -> Option<Out>
+    fn lookup<In, Out>(&self, input: &In) -> Option<&Constrained<In::Constraint, Out>>
     where
         In: Input,
         Out: Clone + 'static,
     {
-        let Constrained::<In::Constraint, Out> { constraint, output } =
+        let constrained: &Constrained<In::Constraint, Out> =
             self.constrained.downcast_ref().expect("wrong entry type");
 
-        input.valid(constraint).then(|| {
-            self.age = 0;
-            output.clone()
-        })
+        input.valid(&constrained.constraint).then(|| constrained)
     }
 }
