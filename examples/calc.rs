@@ -9,7 +9,7 @@ use comemo::{memoize, track, Track, Tracked};
 
 fn main() {
     // Create some scripts in the calc language. This language supports addition
-    // and `eval` statements refering to other files.
+    // and `eval` statements referring to other files.
     let mut files = Files(HashMap::new());
     files.write("alpha.calc", "2 + eval beta.calc");
     files.write("beta.calc", "2 + 3");
@@ -19,7 +19,7 @@ fn main() {
     assert_eq!(evaluate("eval alpha.calc", files.track()), 7);
 
     // [Miss] This is not a top-level hit because this exact string was never
-    // passed to `evalaute`, but this does not compute "2 + 3" again.
+    // passed to `evaluate`, but this does not compute "2 + 3" again.
     assert_eq!(evaluate("eval beta.calc", files.track()), 5);
 
     // Modify the gamma file.

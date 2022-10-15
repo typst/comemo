@@ -54,7 +54,7 @@ use syn::{parse_quote, Error, Result};
 /// There are certain restrictions that apply to memoized functions. Most of
 /// these are checked by comemo, but some are your responsibility:
 /// - They must be **pure**, that is, **free of observable side effects**. This
-///   is **your reponsibility** as comemo can't check it.
+///   is **your responsibility** as comemo can't check it.
 /// - They must have an explicit return type.
 /// - They cannot have mutable parameters (conflicts with purity).
 /// - They cannot use destructuring patterns in their arguments.
@@ -68,7 +68,7 @@ pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 
 /// Make a type trackable.
 ///
-/// Adding this to an impl block of a type `T`, implements the `Track` trait for
+/// Adding this to an impl block of a type `T` implements the `Track` trait for
 /// `T`. This lets you call `.track()` on that type, producing a `Tracked<T>`.
 /// When such a tracked type is used an argument to a memoized function it
 /// enjoys fine-grained access tracking instead of being bluntly hashed.
@@ -102,8 +102,11 @@ pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 /// methods. Just like with memoized functions, certain restrictions apply to
 /// tracked methods:
 /// - They must be **pure**, that is, **free of observable side effects**. This
-///   is **your reponsibility** as comemo can't check it. You can use interior
+///   is **your responsibility** as comemo can't check it. You can use interior
 ///   mutability as long as the method stays idempotent.
+/// - Their **return values must implement `Hash`** and **must feed all the
+///   information they expose to the hasher**. Otherwise, memoized results might
+///   get reused invalidly.
 /// - They cannot be generic.
 /// - They can only be private or public not `pub(...)`.
 /// - They cannot be `unsafe`, `async` or `const`.

@@ -34,14 +34,18 @@ where
         let constraint = In::Constraint::default();
 
         // Check if there is a cached output.
-        if let Some(constrained) = cache.borrow_mut().lookup::<In, Out>(key, &input) {
+        let mut borrow = cache.borrow_mut();
+        if let Some(constrained) = borrow.lookup::<In, Out>(key, &input) {
             // Add the cached constraints to the outer ones.
             let (_, outer) = input.retrack(&constraint);
             outer.join(&constrained.constraint);
-            return constrained.output.clone();
+            let value = constrained.output.clone();
+            borrow.last_was_hit = true;
+            return value;
         }
 
         // Execute the function with the new constraints hooked in.
+        drop(borrow);
         let (input, outer) = input.retrack(&constraint);
         let output = func(input);
 
@@ -49,10 +53,17 @@ where
         outer.join(&constraint);
 
         // Insert the result into the cache.
-        cache.borrow_mut().insert::<In, Out>(key, constraint, output.clone());
+        borrow = cache.borrow_mut();
+        borrow.insert::<In, Out>(key, constraint, output.clone());
+        borrow.last_was_hit = false;
 
         output
     })
+}
+
+/// Whether the last call was a hit.
+pub fn last_was_hit() -> bool {
+    CACHE.with(|cache| cache.borrow().last_was_hit)
 }
 
 /// Evict the cache.
@@ -82,6 +93,8 @@ pub fn evict(max_age: usize) {
 struct Cache {
     /// Maps from function IDs + hashes to memoized results.
     map: HashMap<(TypeId, u128), Vec<Entry>>,
+    /// Whether the last call was a hit.
+    last_was_hit: bool,
 }
 
 impl Cache {

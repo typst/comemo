@@ -23,7 +23,8 @@ use siphasher::sip128::{Hasher128, SipHasher};
 /// hash collision is reduced to an absolute minimum. Therefore, this type
 /// additionally provides `PartialEq` and `Eq` implementations that compare by
 /// hash instead of by value. For this to be correct, your hash implementation
-/// **must feed all information relevant to the `PartialEq` impl to the hasher.**
+/// **must feed all information relevant to the `PartialEq` impl to the
+/// hasher.**
 #[derive(Copy, Clone)]
 pub struct Prehashed<T: ?Sized> {
     /// The precomputed hash.

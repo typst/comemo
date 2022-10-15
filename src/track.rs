@@ -6,9 +6,9 @@ use crate::internal::Family;
 
 /// A trackable type.
 ///
-/// This is implemented by types that have an implementation block annoted with
-/// `#[track]` and for trait objects whose traits are annotated with `#[track]`.
-/// For more details, see [its documentation](macro@crate::track).
+/// This is implemented by types that have an implementation block annotated
+/// with `#[track]` and for trait objects whose traits are annotated with
+/// `#[track]`. For more details, see [its documentation](macro@crate::track).
 pub trait Track: Trackable {
     /// Start tracking a value.
     #[inline]

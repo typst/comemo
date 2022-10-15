@@ -49,13 +49,13 @@ This is where comemo comes into play. It implements _constrained memoization_
 with more fine-grained access tracking. To use it, we can just:
 
 - Add the [`#[memoize]`](macro@memoize) attribute to the `evaluate` function.
-- Add the [`#[track]`](macro@memoize) attribute to the impl block of `Files`.
+- Add the [`#[track]`](macro@track) attribute to the impl block of `Files`.
 - Wrap the `files` argument in comemo's [`Tracked`] container.
 
 This instructs comemo to memoize the evaluation and to automatically track all
-file accesses during a memoization call. As a result, we can reuse the result of
-a `.calc` script evaluation as as long as its dependencies stay the same—even
-if other files change.
+file accesses during a memoized call. As a result, we can reuse the result of a
+`.calc` script evaluation as as long as its dependencies stay the same—even if
+other files change.
 
 ```
 # /*
@@ -79,7 +79,7 @@ impl Files {
 
 For the full example see [`examples/calc.rs`][calc].
 
-[calc]: (https://github.com/typst/comemo/blob/main/examples/calc.rs)
+[calc]: https://github.com/typst/comemo/blob/main/examples/calc.rs
 */
 
 mod cache;
@@ -96,7 +96,7 @@ pub use comemo_macros::{memoize, track};
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::cache::memoized;
+    pub use crate::cache::{last_was_hit, memoized};
     pub use crate::constraint::{hash, Join, MultiConstraint, SoloConstraint};
     pub use crate::input::{assert_hashable_or_trackable, Args};
     pub use crate::track::{to_parts, Trackable};

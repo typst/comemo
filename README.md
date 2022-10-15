@@ -58,9 +58,9 @@ with more fine-grained access tracking. To use it, we can just:
 - Wrap the `files` argument in comemo's `Tracked` container.
 
 This instructs comemo to memoize the evaluation and to automatically track all
-file accesses during a memoization call. As a result, we can reuse the result of
-a `.calc` script evaluation as as long as its dependencies stay the same—even
-if other files change.
+file accesses during a memoized call. As a result, we can reuse the result of a
+`.calc` script evaluation as as long as its dependencies stay the same—even if
+other files change.
 
 ```rust
 use comemo::{memoize, track, Tracked};
@@ -82,7 +82,7 @@ impl Files {
 
 For the full example see [`examples/calc.rs`][calc].
 
-[calc]: (https://github.com/typst/comemo/blob/main/examples/calc.rs)
+[calc]: https://github.com/typst/comemo/blob/main/examples/calc.rs
 
 ## License
 This crate is dual-licensed under the MIT and Apache 2.0 licenses.
