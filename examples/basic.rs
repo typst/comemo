@@ -1,5 +1,9 @@
-#[test]
-fn test_simple() {
+//! This example demonstrates super basic memoization without any tracking.
+//! While comemo goes way beyond this, it's of course also possible!
+
+use comemo::memoize;
+
+fn main() {
     empty(); // [Miss] The cache is empty.
     empty(); // [Hit] Always a hit from now on.
     empty(); // [Hit] Always a hit from now on.
@@ -15,19 +19,19 @@ fn test_simple() {
 }
 
 /// Build a string.
-#[comemo::memoize]
+#[memoize]
 fn empty() -> String {
     format!("The world is {}", "big")
 }
 
 /// Double a number.
-#[comemo::memoize]
+#[memoize]
 fn double(x: u32) -> u32 {
     2 * x
 }
 
 /// Compute the sum of two numbers.
-#[comemo::memoize]
+#[memoize]
 fn sum(a: u32, b: u32) -> u32 {
     a + b
 }

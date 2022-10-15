@@ -1,7 +1,12 @@
 [package]
 name = "comemo-macros"
 version = "0.1.0"
+authors = ["Laurenz <laurmaedje@gmail.com>"]
 edition = "2021"
+description = "Procedural macros for comemo."
+repository = "https://github.com/typst/comemo"
+readme = "../README.md"
+license = "MIT OR Apache-2.0"
 
 [lib]
 proc-macro = true

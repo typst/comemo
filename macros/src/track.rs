@@ -19,6 +19,10 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
             (ty, None)
         }
         syn::Item::Trait(item) => {
+            for param in item.generics.params.iter() {
+                bail!(param, "tracked traits cannot be generic")
+            }
+
             for item in &item.items {
                 methods.push(prepare_trait_method(&item)?);
             }

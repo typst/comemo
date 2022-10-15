@@ -30,9 +30,9 @@ impl SoloConstraint {
     #[inline]
     #[track_caller]
     pub fn set(&self, _: (), hash: u128) {
-        // If there's already a constraint, it must match.
-        // This assertion can fail if a tracked function isn't pure
-        // (which violates comemo's contract).
+        // If there's already a constraint, it must match. This assertion can
+        // fail if a tracked function isn't pure (which violates comemo's
+        // contract).
         if let Some(existing) = self.cell.get() {
             check(hash, existing);
         } else {

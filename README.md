@@ -1,5 +1,13 @@
-/*!
+# comemo
+[![Crates.io](https://img.shields.io/crates/v/comemo.svg)](https://crates.io/crates/comemo)
+[![Documentation](https://docs.rs/comemo/badge.svg)](https://docs.rs/comemo)
+
 Incremental computation through constrained memoization.
+
+```toml
+[dependencies]
+comemo = "0.1"
+```
 
 A _memoized_ function caches its return values so that it only needs to be
 executed once per set of unique arguments. This makes for a great optimization
@@ -15,7 +23,7 @@ language consist of a sum of numbers and `eval` statements that reference other
 
 We can easily write an interpreter that computes the output of a `.calc` file:
 
-```
+```rust
 /// Evaluate a `.calc` script.
 fn evaluate(script: &str, files: &Files) -> i32 {
     script
@@ -28,13 +36,10 @@ fn evaluate(script: &str, files: &Files) -> i32 {
         .sum()
 }
 
-# struct Files;
 impl Files {
     /// Read a file from storage.
     fn read(&self, path: &str) -> String {
-        # /*
         ...
-        # */ String::new()
     }
 }
 ```
@@ -48,17 +53,16 @@ results.
 This is where comemo comes into play. It implements _constrained memoization_
 with more fine-grained access tracking. To use it, we can just:
 
-- Add the [`#[memoize]`](macro@memoize) attribute to the `evaluate` function.
-- Add the [`#[track]`](macro@memoize) attribute to the impl block of `Files`.
-- Wrap the `files` argument in comemo's [`Tracked`] container.
+- Add the `#[memoize]` attribute to the `evaluate` function.
+- Add the `#[track]` attribute to the impl block of `Files`.
+- Wrap the `files` argument in comemo's `Tracked` container.
 
 This instructs comemo to memoize the evaluation and to automatically track all
 file accesses during a memoization call. As a result, we can reuse the result of
 a `.calc` script evaluation as as long as its dependencies stay the same—even
 if other files change.
 
-```
-# /*
+```rust
 use comemo::{memoize, track, Tracked};
 
 /// Evaluate a `.calc` script.
@@ -74,36 +78,11 @@ impl Files {
         ...
     }
 }
-# */
 ```
 
 For the full example see [`examples/calc.rs`][calc].
 
 [calc]: (https://github.com/typst/comemo/blob/main/examples/calc.rs)
-*/
 
-mod cache;
-mod constraint;
-mod input;
-mod prehashed;
-mod track;
-
-pub use crate::cache::evict;
-pub use crate::prehashed::Prehashed;
-pub use crate::track::{Track, Tracked};
-pub use comemo_macros::{memoize, track};
-
-/// These are implementation details. Do not rely on them!
-#[doc(hidden)]
-pub mod internal {
-    pub use crate::cache::memoized;
-    pub use crate::constraint::{hash, Join, MultiConstraint, SoloConstraint};
-    pub use crate::input::{assert_hashable_or_trackable, Args};
-    pub use crate::track::{to_parts, Trackable};
-
-    /// Helper trait for lifetime type families.
-    pub trait Family<'a> {
-        /// The concrete type with lifetime 'a.
-        type Out;
-    }
-}
+## License
+This crate is dual-licensed under the MIT and Apache 2.0 licenses.

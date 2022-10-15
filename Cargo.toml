@@ -1,11 +1,15 @@
 [package]
 name = "comemo"
 version = "0.1.0"
+authors = ["Laurenz <laurmaedje@gmail.com>"]
 edition = "2021"
+description = "Incremental computation through constrained memoization."
+repository = "https://github.com/typst/comemo"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+categories = ["caching"]
+keywords = ["incremental", "memoization", "tracked", "constraints"]
 
 [dependencies]
-comemo-macros = { path = "./macros" }
+comemo-macros = { version = "0.1.0", path = "macros" }
 siphasher = "0.3"
-
-[dev-dependencies]
-unscanny = "0.1"

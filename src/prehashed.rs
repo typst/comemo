@@ -12,20 +12,18 @@ use siphasher::sip128::{Hasher128, SipHasher};
 /// functions. Especially recursive structures like trees benefit from
 /// intermediate prehashed nodes.
 ///
-/// # Equality
-/// Because comemo uses high-quality 128 bit hashes in all places, the risk of a
-/// hash collision is reduced to an absolute minimum. Therefore, this trait
-/// additionally provides `PartialEq` and `Eq` implementations that compare by
-/// hash instead of by value.
-///
-/// # Notice
 /// Note that for a value `v` of type `T`, `hash(v)` is not necessarily equal to
 /// `hash(Prehashed::new(v))`. Writing the precomputed hash into a hasher's
 /// state produces different output than writing the value's parts directly.
 /// However, that seldomly matters as you are typically either dealing with
 /// values of type `T` or with values of type `Prehashed<T>`, not a mix of both.
 ///
-/// [property]: https://doc.rust-lang.org/std/hash/trait.Hash.html
+/// # Equality
+/// Because comemo uses high-quality 128 bit hashes in all places, the risk of a
+/// hash collision is reduced to an absolute minimum. Therefore, this type
+/// additionally provides `PartialEq` and `Eq` implementations that compare by
+/// hash instead of by value. For this to be correct, your hash implementation
+/// **must feed all information relevant to the `PartialEq` impl to the hasher.**
 #[derive(Copy, Clone)]
 pub struct Prehashed<T: ?Sized> {
     /// The precomputed hash.

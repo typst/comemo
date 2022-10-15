@@ -34,7 +34,7 @@ where
         let constraint = In::Constraint::default();
 
         // Check if there is a cached output.
-        if let Some(constrained) = cache.borrow().lookup::<In, Out>(key, &input) {
+        if let Some(constrained) = cache.borrow_mut().lookup::<In, Out>(key, &input) {
             // Add the cached constraints to the outer ones.
             let (_, outer) = input.retrack(&constraint);
             outer.join(&constrained.constraint);
@@ -55,9 +55,26 @@ where
     })
 }
 
-/// Completely clear the cache.
-pub fn clear() {
-    CACHE.with(|cache| cache.borrow_mut().map.clear());
+/// Evict the cache.
+///
+/// This removes all memoized results from the cache whose age is larger than or
+/// equal to `max_age`. The age of a result grows by one during each eviction
+/// and is reset to zero when the result produces a cache hit. Set `max_age` to
+/// zero to completely clear the cache.
+///
+/// Comemo's cache is thread-local, meaning that this only evicts this thread's
+/// cache.
+pub fn evict(max_age: usize) {
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.map.retain(|_, entries| {
+            entries.retain_mut(|entry| {
+                entry.age += 1;
+                entry.age <= max_age
+            });
+            !entries.is_empty()
+        });
+    });
 }
 
 /// The global cache.
@@ -70,7 +87,7 @@ struct Cache {
 impl Cache {
     /// Look for a matching entry in the cache.
     fn lookup<In, Out>(
-        &self,
+        &mut self,
         key: (TypeId, u128),
         input: &In,
     ) -> Option<&Constrained<In::Constraint, Out>>
@@ -79,8 +96,8 @@ impl Cache {
         Out: Clone + 'static,
     {
         self.map
-            .get(&key)?
-            .iter()
+            .get_mut(&key)?
+            .iter_mut()
             .find_map(|entry| entry.lookup::<In, Out>(input))
     }
 
@@ -107,6 +124,8 @@ struct Entry {
     ///
     /// This is of type `Constrained<In::Constraint, Out>`.
     constrained: Box<dyn Any>,
+    /// How many evictions have passed since the entry has been last used.
+    age: usize,
 }
 
 /// A value with a constraint.
@@ -126,11 +145,12 @@ impl Entry {
     {
         Self {
             constrained: Box::new(Constrained { constraint, output }),
+            age: 0,
         }
     }
 
     /// Return the entry's output if it is valid for the given input.
-    fn lookup<In, Out>(&self, input: &In) -> Option<&Constrained<In::Constraint, Out>>
+    fn lookup<In, Out>(&mut self, input: &In) -> Option<&Constrained<In::Constraint, Out>>
     where
         In: Input,
         Out: Clone + 'static,
@@ -138,6 +158,9 @@ impl Entry {
         let constrained: &Constrained<In::Constraint, Out> =
             self.constrained.downcast_ref().expect("wrong entry type");
 
-        input.valid(&constrained.constraint).then(|| constrained)
+        input.valid(&constrained.constraint).then(|| {
+            self.age = 0;
+            constrained
+        })
     }
 }
