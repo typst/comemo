@@ -1,10 +1,9 @@
-use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
-use crate::constraint::Join;
+use crate::constraint::{Constraint, Join};
 use crate::internal::Family;
-use crate::track::{from_parts, to_parts, Track, Trackable, Tracked};
+use crate::track::{Track, Trackable, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
 #[inline]
@@ -16,10 +15,10 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// types containing tuples up to length twelve.
 pub trait Input {
     /// Describes an instance of this input.
-    type Constraint: Default + Debug + Join + 'static;
+    type Constraint: Default + Join + 'static;
 
     /// The input with new constraints hooked in.
-    type Tracked: for<'f> Family<'f>;
+    type Tracked: for<'a> Family<'a>;
 
     /// The extracted outer constraints.
     type Outer: Join<Self::Constraint>;
@@ -30,14 +29,17 @@ pub trait Input {
     /// Validate the tracked parts of the input.
     fn valid(&self, constraint: &Self::Constraint) -> bool;
 
+    /// Replay mutations to the input.
+    fn replay(&mut self, constraint: &Self::Constraint);
+
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
-    fn retrack<'f>(
+    fn retrack<'r>(
         self,
-        constraint: &'f Self::Constraint,
-    ) -> (<Self::Tracked as Family<'f>>::Out, Self::Outer)
+        constraint: &'r Self::Constraint,
+    ) -> (<Self::Tracked as Family<'r>>::Out, Self::Outer)
     where
-        Self: 'f;
+        Self: 'r;
 }
 
 impl<T> Input for T
@@ -60,9 +62,12 @@ where
     }
 
     #[inline]
-    fn retrack<'f>(self, _: &'f ()) -> (Self, ())
+    fn replay(&mut self, _: &Self::Constraint) {}
+
+    #[inline]
+    fn retrack<'r>(self, _: &'r ()) -> (Self, ())
     where
-        Self: 'f,
+        Self: 'r,
     {
         (self, ())
     }
@@ -80,39 +85,93 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = T::Constraint;
+    type Constraint = Constraint<T::Call>;
     type Tracked = TrackedFamily<T>;
-    type Outer = Option<&'a T::Constraint>;
+    type Outer = Option<&'a Constraint<T::Call>>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
     fn valid(&self, constraint: &Self::Constraint) -> bool {
-        Trackable::valid(to_parts(*self).0, constraint)
+        Trackable::valid(self.value, constraint)
     }
 
     #[inline]
-    fn retrack<'f>(
+    fn replay(&mut self, _: &Self::Constraint) {}
+
+    #[inline]
+    fn retrack<'r>(
         self,
-        constraint: &'f Self::Constraint,
-    ) -> (Tracked<'f, T>, Option<&'a T::Constraint>)
+        constraint: &'r Self::Constraint,
+    ) -> (Tracked<'r, T>, Option<&'a Constraint<T::Call>>)
     where
-        Self: 'f,
+        Self: 'r,
     {
-        let (value, outer) = to_parts(self);
-        (from_parts(value, Some(constraint)), outer)
+        let tracked = Tracked {
+            value: self.value,
+            constraint: Some(constraint),
+        };
+        (tracked, self.constraint)
     }
 }
 
-/// Type constructor for `'f -> Tracked<'f, T>`.
+/// Type constructor for `'a -> Tracked<'a, T>`.
 pub struct TrackedFamily<T: ?Sized>(PhantomData<T>);
 
-impl<'f, T> Family<'f> for TrackedFamily<T>
+impl<'a, T> Family<'a> for TrackedFamily<T>
 where
-    T: Track + ?Sized + 'f,
+    T: Track + ?Sized + 'a,
 {
-    type Out = Tracked<'f, T>;
+    type Out = Tracked<'a, T>;
+}
+
+impl<'a, T> Input for TrackedMut<'a, T>
+where
+    T: Track + ?Sized,
+{
+    // Forward constraint from `Trackable` implementation.
+    type Constraint = Constraint<T::Call>;
+    type Tracked = TrackedMutFamily<T>;
+    type Outer = Option<&'a Constraint<T::Call>>;
+
+    #[inline]
+    fn key<H: Hasher>(&self, _: &mut H) {}
+
+    #[inline]
+    fn valid(&self, constraint: &Self::Constraint) -> bool {
+        Trackable::valid(self.value, constraint)
+    }
+
+    #[inline]
+    fn replay(&mut self, constraint: &Self::Constraint) {
+        self.value.replay(constraint);
+    }
+
+    #[inline]
+    fn retrack<'r>(
+        self,
+        constraint: &'r Self::Constraint,
+    ) -> (TrackedMut<'r, T>, Option<&'a Constraint<T::Call>>)
+    where
+        Self: 'r,
+    {
+        let tracked = TrackedMut {
+            value: self.value,
+            constraint: Some(constraint),
+        };
+        (tracked, self.constraint)
+    }
+}
+
+/// Type constructor for `'a -> TrackedMut<'a, T>`.
+pub struct TrackedMutFamily<T: ?Sized>(PhantomData<T>);
+
+impl<'a, T> Family<'a> for TrackedMutFamily<T>
+where
+    T: Track + ?Sized + 'a,
+{
+    type Out = TrackedMut<'a, T>;
 }
 
 /// Wrapper for multiple inputs.
@@ -123,7 +182,7 @@ pub struct ArgsFamily<T>(PhantomData<T>);
 
 macro_rules! args_input {
     ($($param:tt $alt:tt $idx:tt ),*) => {
-        #[allow(unused_variables)]
+        #[allow(unused_variables, non_snake_case)]
         impl<$($param: Input),*> Input for Args<($($param,)*)> {
             type Constraint = ($($param::Constraint,)*);
             type Tracked = ArgsFamily<($($param,)*)>;
@@ -139,14 +198,18 @@ macro_rules! args_input {
                 true $(&& (self.0).$idx.valid(&constraint.$idx))*
             }
 
-            #[allow(non_snake_case)]
             #[inline]
-            fn retrack<'f>(
-                            self,
-                constraint: &'f Self::Constraint,
-            ) -> (<Self::Tracked as Family<'f>>::Out, Self::Outer)
+            fn replay(&mut self, constraint: &Self::Constraint) {
+                $((self.0).$idx.replay(&constraint.$idx);)*
+            }
+
+            #[inline]
+            fn retrack<'r>(
+                self,
+                constraint: &'r Self::Constraint,
+            ) -> (<Self::Tracked as Family<'r>>::Out, Self::Outer)
             where
-                Self: 'f,
+                Self: 'r,
             {
                 $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
                 (($($param.0,)*), ($($param.1,)*))
@@ -154,8 +217,8 @@ macro_rules! args_input {
         }
 
         #[allow(unused_parens)]
-        impl<'f, $($param: Input),*> Family<'f> for ArgsFamily<($($param,)*)> {
-            type Out = ($(<$param::Tracked as Family<'f>>::Out,)*);
+        impl<'a, $($param: Input),*> Family<'a> for ArgsFamily<($($param,)*)> {
+            type Out = ($(<$param::Tracked as Family<'a>>::Out,)*);
         }
 
         #[allow(unused_variables)]

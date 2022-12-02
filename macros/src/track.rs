@@ -42,7 +42,7 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
 
     Ok(quote! {
         #item
-        const _: () = { mod private { #scope } };
+        const _: () = { #scope };
     })
 }
 
@@ -50,6 +50,7 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
 struct Method {
     vis: syn::Visibility,
     sig: syn::Signature,
+    mutable: bool,
     args: Vec<syn::Ident>,
     types: Vec<syn::Type>,
     kinds: Vec<Kind>,
@@ -63,25 +64,17 @@ enum Kind {
 
 /// Preprocess and validate a method in an impl block.
 fn prepare_impl_method(item: &syn::ImplItem) -> Result<Method> {
-    let method = match item {
-        syn::ImplItem::Method(method) => method,
-        _ => bail!(item, "only methods can be tracked"),
+    let syn::ImplItem::Method(method) = item else {
+        bail!(item, "only methods can be tracked");
     };
 
-    let vis = match method.vis {
-        syn::Visibility::Inherited => parse_quote! { pub(super) },
-        syn::Visibility::Public(_) => parse_quote! { pub },
-        _ => bail!(method.vis, "only private and public methods can be tracked"),
-    };
-
-    prepare_method(vis, &method.sig)
+    prepare_method(method.vis.clone(), &method.sig)
 }
 
 /// Preprocess and validate a method in a trait.
 fn prepare_trait_method(item: &syn::TraitItem) -> Result<Method> {
-    let method = match item {
-        syn::TraitItem::Method(method) => method,
-        _ => bail!(item, "only methods can be tracked"),
+    let syn::TraitItem::Method(method) = item else {
+        bail!(item, "only methods can be tracked");
     };
 
     prepare_method(syn::Visibility::Inherited, &method.sig)
@@ -111,16 +104,12 @@ fn prepare_method(vis: syn::Visibility, sig: &syn::Signature) -> Result<Method> 
     }
 
     let mut inputs = sig.inputs.iter();
-    let receiver = match inputs.next() {
-        Some(syn::FnArg::Receiver(recv)) => recv,
-        _ => bail!(sig, "tracked method must take self"),
+    let Some(syn::FnArg::Receiver(receiver)) = inputs.next() else {
+        bail!(sig, "tracked method must take self");
     };
 
-    if receiver.reference.is_none() || receiver.mutability.is_some() {
-        bail!(
-            receiver,
-            "tracked method must take self by shared reference"
-        );
+    if receiver.reference.is_none() {
+        bail!(receiver, "tracked method must take self by reference");
     }
 
     let mut args = vec![];
@@ -133,15 +122,14 @@ fn prepare_method(vis: syn::Visibility, sig: &syn::Signature) -> Result<Method> 
             syn::FnArg::Receiver(_) => continue,
         };
 
-        let name = match typed.pat.as_ref() {
-            syn::Pat::Ident(syn::PatIdent {
-                by_ref: None,
-                mutability: None,
-                ident,
-                subpat: None,
-                ..
-            }) => ident.clone(),
-            pat => bail!(pat, "only simple identifiers are supported"),
+        let syn::Pat::Ident(syn::PatIdent {
+            by_ref: None,
+            mutability: None,
+            ident,
+            subpat: None,
+            ..
+        }) = typed.pat.as_ref() else {
+            bail!(typed.pat, "only simple identifiers are supported");
         };
 
         let (ty, kind) = match typed.ty.as_ref() {
@@ -158,21 +146,23 @@ fn prepare_method(vis: syn::Visibility, sig: &syn::Signature) -> Result<Method> 
             ty => (ty.clone(), Kind::Normal),
         };
 
-        args.push(name);
+        args.push(ident.clone());
         types.push(ty);
         kinds.push(kind)
     }
 
-    match sig.output {
-        syn::ReturnType::Default => {
-            bail!(sig, "tracked methods must have a return type")
+    if let syn::ReturnType::Type(_, ty) = &sig.output {
+        if let syn::Type::Reference(syn::TypeReference { mutability, .. }) = ty.as_ref() {
+            if mutability.is_some() {
+                bail!(ty, "tracked methods cannot return mutable references");
+            }
         }
-        syn::ReturnType::Type(..) => {}
     }
 
     Ok(Method {
         vis,
         sig: sig.clone(),
+        mutable: receiver.mutability.is_some(),
         args,
         types,
         kinds,
@@ -185,62 +175,109 @@ fn create(
     trait_: Option<syn::Ident>,
     methods: &[Method],
 ) -> Result<TokenStream> {
-    let surface = quote! { __ComemoSurface };
-    let family = quote! { __ComemoSurfaceFamily };
-    let constraint = quote! { __ComemoConstraint };
-
-    let validations = methods.iter().map(create_validation);
-    let wrapper_methods = methods.iter().map(create_wrapper);
-    let constraint_fields = methods.iter().map(create_constraint);
-    let join_calls = methods.iter().map(create_join);
     let prefix = trait_.map(|name| quote! { #name for });
+    let variants = methods.iter().map(create_variant);
+    let validations = methods.iter().map(create_validation);
+    let replays = methods.iter().map(create_replay);
+    let wrapper_methods = methods
+        .iter()
+        .filter(|m| !m.mutable)
+        .map(|m| create_wrapper(m, false));
+    let wrapper_methods_mut = methods.iter().map(|m| create_wrapper(m, true));
+    let maybe_cloned = if methods.iter().any(|it| it.mutable) {
+        quote! { ::std::clone::Clone::clone(self) }
+    } else {
+        quote! { self }
+    };
 
     Ok(quote! {
-        use super::*;
+        #[derive(Clone, PartialEq)]
+        pub struct __ComemoCall(__ComemoVariant);
 
-        #[doc(hidden)]
+        #[derive(Clone, PartialEq)]
+        #[allow(non_camel_case_types)]
+        enum __ComemoVariant {
+            #(#variants,)*
+        }
+
         impl ::comemo::Track for #ty {}
 
         #[doc(hidden)]
         impl ::comemo::internal::Trackable for #ty {
-            type Constraint = #constraint;
-            type Surface = #family;
+            type Call = __ComemoCall;
+            type Surface = __ComemoSurfaceFamily;
+            type SurfaceMut = __ComemoSurfaceMutFamily;
 
-            fn valid(&self, constraint: &Self::Constraint) -> bool {
-                true #(&& #validations)*
+            #[inline]
+            fn valid(&self, constraint: &::comemo::internal::Constraint<Self::Call>) -> bool {
+                let mut this = #maybe_cloned;
+                constraint.valid(|call| match &call.0 { #(#validations,)* })
             }
 
-            fn surface<'a, 'r>(
-                tracked: &'r ::comemo::Tracked<'a, #ty>,
-            ) -> &'r #surface<'a> {
-                // Safety: Surface is repr(transparent).
+            #[inline]
+            #[allow(unused_variables)]
+            fn replay(&mut self, constraint: &::comemo::internal::Constraint<Self::Call>) {
+                constraint.replay(|call| match &call.0 { #(#replays,)* });
+            }
+
+            #[inline]
+            fn surface_ref<'a, 'r>(
+                tracked: &'r ::comemo::Tracked<'a, Self>,
+            ) -> &'r __ComemoSurface<'a> {
+                // Safety: __ComemoSurface is repr(transparent).
                 unsafe { &*(tracked as *const _ as *const _) }
             }
-        }
 
-        pub enum #family {}
-        impl<'a> ::comemo::internal::Family<'a> for #family {
-            type Out = #surface<'a>;
+            #[inline]
+            fn surface_mut_ref<'a, 'r>(
+                tracked: &'r ::comemo::TrackedMut<'a, Self>,
+            ) -> &'r __ComemoSurfaceMut<'a> {
+                // Safety: __ComemoSurfaceMut is repr(transparent).
+                unsafe { &*(tracked as *const _ as *const _) }
+            }
+
+            #[inline]
+            fn surface_mut_mut<'a, 'r>(
+                tracked: &'r mut ::comemo::TrackedMut<'a, Self>,
+            ) -> &'r mut __ComemoSurfaceMut<'a> {
+                // Safety: __ComemoSurfaceMut is repr(transparent).
+                unsafe { &mut *(tracked as *mut _ as *mut _) }
+            }
         }
 
         #[repr(transparent)]
-        pub struct #surface<'a>(::comemo::Tracked<'a, #ty>);
+        pub struct __ComemoSurface<'a>(::comemo::Tracked<'a, #ty>);
 
-        impl #prefix #surface<'_> {
+        #[allow(dead_code)]
+        impl #prefix __ComemoSurface<'_> {
             #(#wrapper_methods)*
         }
 
-        #[derive(Debug, Default)]
-        pub struct #constraint {
-            #(#constraint_fields)*
+        pub enum __ComemoSurfaceFamily {}
+        impl<'a> ::comemo::internal::Family<'a> for __ComemoSurfaceFamily {
+            type Out = __ComemoSurface<'a>;
         }
 
-        impl ::comemo::internal::Join for #constraint {
-            fn join(&self, inner: &Self) {
-                #(#join_calls)*
-            }
+        #[repr(transparent)]
+        pub struct __ComemoSurfaceMut<'a>(::comemo::TrackedMut<'a, #ty>);
+
+        #[allow(dead_code)]
+        impl #prefix __ComemoSurfaceMut<'_> {
+            #(#wrapper_methods_mut)*
+        }
+
+        pub enum __ComemoSurfaceMutFamily {}
+        impl<'a> ::comemo::internal::Family<'a> for __ComemoSurfaceMutFamily {
+            type Out = __ComemoSurfaceMut<'a>;
         }
     })
+}
+
+/// Produce a constraint validation for a method.
+fn create_variant(method: &Method) -> TokenStream {
+    let name = &method.sig.ident;
+    let types = &method.types;
+    quote! { #name(#(<#types as ::std::borrow::ToOwned>::Owned),*) }
 }
 
 /// Produce a constraint validation for a method.
@@ -252,48 +289,56 @@ fn create_validation(method: &Method) -> TokenStream {
         Kind::Reference => quote! { #arg },
     });
     quote! {
-        constraint.#name
-            .valid(|(#(#args,)*)| ::comemo::internal::hash(&self.#name(#(#prepared,)*)))
+        __ComemoVariant::#name(#(#args),*)
+            => ::comemo::internal::hash(&this.#name(#(#prepared),*))
     }
 }
 
-/// Produce a wrapped surface method.
-fn create_wrapper(method: &Method) -> TokenStream {
-    let vis = &method.vis;
-    let sig = &method.sig;
+/// Produce a constraint validation for a method.
+fn create_replay(method: &Method) -> TokenStream {
     let name = &method.sig.ident;
     let args = &method.args;
+    let prepared = method.args.iter().zip(&method.kinds).map(|(arg, kind)| match kind {
+        Kind::Normal => quote! { #arg.to_owned() },
+        Kind::Reference => quote! { #arg },
+    });
+    let body = method.mutable.then(|| {
+        quote! {
+            self.#name(#(#prepared),*);
+        }
+    });
+    quote! { __ComemoVariant::#name(#(#args),*) => { #body } }
+}
+
+/// Produce a wrapped surface method.
+fn create_wrapper(method: &Method, tracked_mut: bool) -> TokenStream {
+    let name = &method.sig.ident;
+    let vis = &method.vis;
+    let sig = &method.sig;
+    let args = &method.args;
+    let mutable = method.mutable;
+    let to_parts = if !tracked_mut {
+        quote! { to_parts_ref(self.0) }
+    } else if !mutable {
+        quote! { to_parts_mut_ref(&self.0) }
+    } else {
+        quote! { to_parts_mut_mut(&mut self.0) }
+    };
     quote! {
         #[track_caller]
+        #[inline]
         #vis #sig {
-            let input = (#(#args.to_owned(),)*);
-            let (value, constraint) = ::comemo::internal::to_parts(self.0);
+            let call = __ComemoVariant::#name(#(#args.to_owned()),*);
+            let (value, constraint) = ::comemo::internal::#to_parts;
             let output = value.#name(#(#args,)*);
-            if let Some(constraint) = &constraint {
-                constraint.#name.set(input, ::comemo::internal::hash(&output));
+            if let Some(constraint) = constraint {
+                constraint.push(
+                    __ComemoCall(call),
+                    ::comemo::internal::hash(&output),
+                    #mutable,
+                );
             }
             output
         }
     }
-}
-
-/// Produce a constraint field for a method.
-fn create_constraint(method: &Method) -> TokenStream {
-    let name = &method.sig.ident;
-    let types = &method.types;
-    if types.is_empty() {
-        quote! { #name: ::comemo::internal::SoloConstraint, }
-    } else {
-        quote_spanned! { method.sig.span() =>
-            #name: ::comemo::internal::MultiConstraint<
-                (#(<#types as ::std::borrow::ToOwned>::Owned,)*)
-            >,
-        }
-    }
-}
-
-/// Produce a join call for a method's constraint.
-fn create_join(method: &Method) -> TokenStream {
-    let name = &method.sig.ident;
-    quote! { self.#name.join(&inner.#name); }
 }

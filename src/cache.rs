@@ -1,7 +1,6 @@
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::Debug;
 
 use siphasher::sip128::{Hasher128, SipHasher};
 
@@ -15,10 +14,10 @@ thread_local! {
 }
 
 /// Execute a function or use a cached result for it.
-pub fn memoized<In, Out, F>(id: TypeId, input: In, func: F) -> Out
+pub fn memoized<In, Out, F>(id: TypeId, mut input: In, func: F) -> Out
 where
     In: Input,
-    Out: Debug + Clone + 'static,
+    Out: Clone + 'static,
     F: for<'f> FnOnce(<In::Tracked as Family<'f>>::Out) -> Out,
 {
     CACHE.with(|cache| {
@@ -35,17 +34,23 @@ where
 
         // Check if there is a cached output.
         let mut borrow = cache.borrow_mut();
-        if let Some(constrained) = borrow.lookup::<In, Out>(key, &input) {
+        if let Some(constrained) = borrow.lookup::<In, Out>(key, &mut input) {
+            // Replay the mutations.
+            input.replay(&constrained.constraint);
+
             // Add the cached constraints to the outer ones.
-            let (_, outer) = input.retrack(&constraint);
-            outer.join(&constrained.constraint);
+            input.retrack(&constraint).1.join(&constrained.constraint);
+
             let value = constrained.output.clone();
             borrow.last_was_hit = true;
             return value;
         }
 
-        // Execute the function with the new constraints hooked in.
+        // Release the borrow so that nested memoized calls can access the
+        // cache without panicking.
         drop(borrow);
+
+        // Execute the function with the new constraints hooked in.
         let (input, outer) = input.retrack(&constraint);
         let output = func(input);
 

@@ -90,16 +90,16 @@ mod track;
 
 pub use crate::cache::evict;
 pub use crate::prehashed::Prehashed;
-pub use crate::track::{Track, Tracked};
+pub use crate::track::{Track, Tracked, TrackedMut};
 pub use comemo_macros::{memoize, track};
 
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
     pub use crate::cache::{last_was_hit, memoized};
-    pub use crate::constraint::{hash, Join, MultiConstraint, SoloConstraint};
+    pub use crate::constraint::{hash, Constraint};
     pub use crate::input::{assert_hashable_or_trackable, Args};
-    pub use crate::track::{to_parts, Trackable};
+    pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Trackable};
 
     /// Helper trait for lifetime type families.
     pub trait Family<'a> {

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 
-use comemo::{evict, memoize, track, Track, Tracked};
+use comemo::{evict, memoize, track, Track, Tracked, TrackedMut};
 
 macro_rules! test {
     (miss: $call:expr, $result:expr) => {{
@@ -247,12 +247,60 @@ impl Tester {
 
     /// Return value can borrow from both.
     fn double_ref<'a>(&'a self, name: &'a str) -> &'a str {
-        if name.len() > self.data.len() { name } else { &self.data }
+        if name.len() > self.data.len() {
+            name
+        } else {
+            &self.data
+        }
     }
 
     /// Normal method with owned argument.
     fn by_value(&self, heavy: Heavy) -> usize {
         self.data.len() + heavy.0.len()
+    }
+}
+
+/// Test mutable tracking.
+#[test]
+#[rustfmt::skip]
+fn test_mutable() {
+    #[comemo::memoize]
+    fn dump(mut sink: TrackedMut<Emitter>) {
+        sink.emit("a");
+        sink.emit("b");
+        let c = sink.len_or_ten().to_string();
+        sink.emit(&c);
+    }
+
+    let mut emitter = Emitter(vec![]);
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    assert_eq!(emitter.0, [
+        "a", "b", "2",
+        "a", "b", "5",
+        "a", "b", "8",
+        "a", "b", "10",
+        "a", "b", "10",
+        "a", "b", "10",
+    ])
+}
+
+/// A tracked type with a mutable and an immutable method.
+#[derive(Clone)]
+struct Emitter(Vec<String>);
+
+#[track]
+impl Emitter {
+    fn emit(&mut self, msg: &str) {
+        self.0.push(msg.into());
+    }
+
+    fn len_or_ten(&self) -> usize {
+        self.0.len().min(10)
     }
 }
 
