@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use crate::constraint::{Constraint, Join};
 use crate::internal::Family;
-use crate::track::{Track, Trackable, Tracked, TrackedMut};
+use crate::track::{Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
 #[inline]
@@ -85,16 +85,16 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = Constraint<T::Call>;
+    type Constraint = Constraint<T>;
     type Tracked = TrackedFamily<T>;
-    type Outer = Option<&'a Constraint<T::Call>>;
+    type Outer = Option<&'a Constraint<T>>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
     fn valid(&self, constraint: &Self::Constraint) -> bool {
-        Trackable::valid(self.value, constraint)
+        self.value.valid(constraint)
     }
 
     #[inline]
@@ -104,7 +104,7 @@ where
     fn retrack<'r>(
         self,
         constraint: &'r Self::Constraint,
-    ) -> (Tracked<'r, T>, Option<&'a Constraint<T::Call>>)
+    ) -> (Tracked<'r, T>, Option<&'a Constraint<T>>)
     where
         Self: 'r,
     {
@@ -131,16 +131,16 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = Constraint<T::Call>;
+    type Constraint = Constraint<T>;
     type Tracked = TrackedMutFamily<T>;
-    type Outer = Option<&'a Constraint<T::Call>>;
+    type Outer = Option<&'a Constraint<T>>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
     fn valid(&self, constraint: &Self::Constraint) -> bool {
-        Trackable::valid(self.value, constraint)
+        self.value.valid(constraint)
     }
 
     #[inline]
@@ -152,7 +152,7 @@ where
     fn retrack<'r>(
         self,
         constraint: &'r Self::Constraint,
-    ) -> (TrackedMut<'r, T>, Option<&'a Constraint<T::Call>>)
+    ) -> (TrackedMut<'r, T>, Option<&'a Constraint<T>>)
     where
         Self: 'r,
     {

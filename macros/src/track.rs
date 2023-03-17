@@ -200,7 +200,13 @@ fn create(
             #(#variants,)*
         }
 
-        impl ::comemo::Track for #ty {}
+        impl ::comemo::Track for #ty {
+            #[inline]
+            fn valid(&self, constraint: &::comemo::Constraint<Self>) -> bool {
+                let mut this = #maybe_cloned;
+                constraint.valid(|call| match &call.0 { #(#validations,)* })
+            }
+        }
 
         #[doc(hidden)]
         impl ::comemo::internal::Trackable for #ty {
@@ -209,14 +215,8 @@ fn create(
             type SurfaceMut = __ComemoSurfaceMutFamily;
 
             #[inline]
-            fn valid(&self, constraint: &::comemo::internal::Constraint<Self::Call>) -> bool {
-                let mut this = #maybe_cloned;
-                constraint.valid(|call| match &call.0 { #(#validations,)* })
-            }
-
-            #[inline]
             #[allow(unused_variables)]
-            fn replay(&mut self, constraint: &::comemo::internal::Constraint<Self::Call>) {
+            fn replay(&mut self, constraint: &::comemo::Constraint<Self>) {
                 constraint.replay(|call| match &call.0 { #(#replays,)* });
             }
 

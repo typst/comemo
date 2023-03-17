@@ -3,9 +3,14 @@ use std::hash::Hash;
 
 use siphasher::sip128::{Hasher128, SipHasher};
 
+use crate::track::Trackable;
+
 /// Defines a constraint for a tracked method without arguments.
-pub struct Constraint<Call> {
-    calls: RefCell<Vec<Entry<Call>>>,
+pub struct Constraint<T>
+where
+    T: Trackable + ?Sized,
+{
+    calls: RefCell<Vec<Entry<T::Call>>>,
 }
 
 /// A call entry.
@@ -15,13 +20,21 @@ struct Entry<Call> {
     mutable: bool,
 }
 
-impl<Call> Constraint<Call>
+impl<T> Constraint<T>
 where
-    Call: Clone + PartialEq,
+    T: Trackable + ?Sized,
 {
+    /// Create empty constraints.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Enter a constraint for a call to an immutable function.
+    ///
+    /// This method is not part of the public API!
     #[inline]
-    pub fn push(&self, call: Call, hash: u128, mutable: bool) {
+    #[doc(hidden)]
+    pub fn push(&self, call: T::Call, hash: u128, mutable: bool) {
         let mut calls = self.calls.borrow_mut();
 
         if !mutable {
@@ -41,19 +54,25 @@ where
     }
 
     /// Whether the method satisfies as all input-output pairs.
+    ///
+    /// This method is not part of the public API!
     #[inline]
+    #[doc(hidden)]
     pub fn valid<F>(&self, mut f: F) -> bool
     where
-        F: FnMut(&Call) -> u128,
+        F: FnMut(&T::Call) -> u128,
     {
         self.calls.borrow().iter().all(|entry| f(&entry.call) == entry.hash)
     }
 
     /// Replay all input-output pairs.
+    ///
+    /// This method is not part of the public API!
     #[inline]
+    #[doc(hidden)]
     pub fn replay<F>(&self, mut f: F)
     where
-        F: FnMut(&Call),
+        F: FnMut(&T::Call),
     {
         for entry in self.calls.borrow().iter() {
             if entry.mutable {
@@ -63,9 +82,9 @@ where
     }
 }
 
-impl<Call> Default for Constraint<Call>
+impl<T> Default for Constraint<T>
 where
-    Call: Clone + PartialEq,
+    T: Trackable + ?Sized,
 {
     fn default() -> Self {
         Self { calls: RefCell::new(vec![]) }
@@ -87,9 +106,9 @@ impl<T: Join> Join<T> for Option<&T> {
     }
 }
 
-impl<Call> Join for Constraint<Call>
+impl<T> Join for Constraint<T>
 where
-    Call: Clone + PartialEq,
+    T: Trackable + ?Sized,
 {
     #[inline]
     fn join(&self, inner: &Self) {

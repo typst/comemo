@@ -89,6 +89,7 @@ mod prehashed;
 mod track;
 
 pub use crate::cache::evict;
+pub use crate::constraint::Constraint;
 pub use crate::prehashed::Prehashed;
 pub use crate::track::{Track, Tracked, TrackedMut};
 pub use comemo_macros::{memoize, track};
@@ -97,7 +98,7 @@ pub use comemo_macros::{memoize, track};
 #[doc(hidden)]
 pub mod internal {
     pub use crate::cache::{last_was_hit, memoized};
-    pub use crate::constraint::{hash, Constraint};
+    pub use crate::constraint::hash;
     pub use crate::input::{assert_hashable_or_trackable, Args};
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Trackable};
 

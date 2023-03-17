@@ -21,6 +21,32 @@ pub trait Track: Trackable {
     fn track_mut(&mut self) -> TrackedMut<Self> {
         TrackedMut { value: self, constraint: None }
     }
+
+    /// Start tracking all accesses into a constraint.
+    #[inline]
+    fn track_with<'a>(&'a self, constraint: &'a Constraint<Self>) -> Tracked<'a, Self> {
+        Tracked {
+            value: self,
+            constraint: Some(constraint),
+        }
+    }
+
+    /// Start tracking all accesses and mutations into a constraint.
+    #[inline]
+    fn track_mut_with<'a>(
+        &'a mut self,
+        constraint: &'a Constraint<Self>,
+    ) -> TrackedMut<'a, Self> {
+        TrackedMut {
+            value: self,
+            constraint: Some(constraint),
+        }
+    }
+
+    /// Whether this value fulfills the given constraints.
+    ///
+    /// Such constraints can be generated with `track_with` or `track_mut_with`.
+    fn valid(&self, constraint: &Constraint<Self>) -> bool;
 }
 
 /// Non-exposed parts of the `Track` trait.
@@ -34,11 +60,8 @@ pub trait Trackable: 'static {
     /// The mutable tracked API surface of this type.
     type SurfaceMut: for<'a> Family<'a>;
 
-    /// Whether an instance fulfills the given constraint.
-    fn valid(&self, constraint: &Constraint<Self::Call>) -> bool;
-
     /// Replay mutations to the value.
-    fn replay(&mut self, constraint: &Constraint<Self::Call>);
+    fn replay(&mut self, constraint: &Constraint<Self>);
 
     /// Access the immutable surface from a `Tracked`.
     fn surface_ref<'a, 't>(
@@ -79,7 +102,7 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) constraint: Option<&'a Constraint<T::Call>>,
+    pub(crate) constraint: Option<&'a Constraint<T>>,
 }
 
 // The type `Tracked<T>` automatically dereferences to T's generated surface
@@ -136,7 +159,7 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) constraint: Option<&'a Constraint<T::Call>>,
+    pub(crate) constraint: Option<&'a Constraint<T>>,
 }
 
 impl<'a, T> TrackedMut<'a, T>
@@ -214,7 +237,7 @@ where
 
 /// Destructure a `Tracked<_>` into its parts.
 #[inline]
-pub fn to_parts_ref<T>(tracked: Tracked<T>) -> (&T, Option<&Constraint<T::Call>>)
+pub fn to_parts_ref<T>(tracked: Tracked<T>) -> (&T, Option<&Constraint<T>>)
 where
     T: Track + ?Sized,
 {
@@ -225,7 +248,7 @@ where
 #[inline]
 pub fn to_parts_mut_ref<'a, T>(
     tracked: &'a TrackedMut<T>,
-) -> (&'a T, Option<&'a Constraint<T::Call>>)
+) -> (&'a T, Option<&'a Constraint<T>>)
 where
     T: Track + ?Sized,
 {
@@ -236,7 +259,7 @@ where
 #[inline]
 pub fn to_parts_mut_mut<'a, T>(
     tracked: &'a mut TrackedMut<T>,
-) -> (&'a mut T, Option<&'a Constraint<T::Call>>)
+) -> (&'a mut T, Option<&'a Constraint<T>>)
 where
     T: Track + ?Sized,
 {
