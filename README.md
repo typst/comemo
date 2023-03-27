@@ -6,7 +6,7 @@ Incremental computation through constrained memoization.
 
 ```toml
 [dependencies]
-comemo = "0.1"
+comemo = "0.2"
 ```
 
 A _memoized_ function caches its return values so that it only needs to be
