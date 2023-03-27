@@ -25,10 +25,7 @@ pub trait Track: Trackable {
     /// Start tracking all accesses into a constraint.
     #[inline]
     fn track_with<'a>(&'a self, constraint: &'a Constraint<Self>) -> Tracked<'a, Self> {
-        Tracked {
-            value: self,
-            constraint: Some(constraint),
-        }
+        Tracked { value: self, constraint: Some(constraint) }
     }
 
     /// Start tracking all accesses and mutations into a constraint.
@@ -37,10 +34,7 @@ pub trait Track: Trackable {
         &'a mut self,
         constraint: &'a Constraint<Self>,
     ) -> TrackedMut<'a, Self> {
-        TrackedMut {
-            value: self,
-            constraint: Some(constraint),
-        }
+        TrackedMut { value: self, constraint: Some(constraint) }
     }
 
     /// Whether this value fulfills the given constraints.
@@ -172,10 +166,7 @@ where
     /// defined on `T`. It should be called as `TrackedMut::downgrade(...)`.
     #[inline]
     pub fn downgrade(this: Self) -> Tracked<'a, T> {
-        Tracked {
-            value: this.value,
-            constraint: this.constraint,
-        }
+        Tracked { value: this.value, constraint: this.constraint }
     }
 
     /// Reborrow with a shorter lifetime.
@@ -184,10 +175,7 @@ where
     /// defined on `T`. It should be called as `TrackedMut::reborrow(...)`.
     #[inline]
     pub fn reborrow(this: &Self) -> Tracked<'_, T> {
-        Tracked {
-            value: this.value,
-            constraint: this.constraint,
-        }
+        Tracked { value: this.value, constraint: this.constraint }
     }
 
     /// Reborrow mutably with a shorter lifetime.
@@ -196,10 +184,7 @@ where
     /// defined on `T`. It should be called as `TrackedMut::reborrow_mut(...)`.
     #[inline]
     pub fn reborrow_mut(this: &mut Self) -> TrackedMut<'_, T> {
-        TrackedMut {
-            value: this.value,
-            constraint: this.constraint,
-        }
+        TrackedMut { value: this.value, constraint: this.constraint }
     }
 }
 

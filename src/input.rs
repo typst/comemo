@@ -108,10 +108,7 @@ where
     where
         Self: 'r,
     {
-        let tracked = Tracked {
-            value: self.value,
-            constraint: Some(constraint),
-        };
+        let tracked = Tracked { value: self.value, constraint: Some(constraint) };
         (tracked, self.constraint)
     }
 }
@@ -156,10 +153,7 @@ where
     where
         Self: 'r,
     {
-        let tracked = TrackedMut {
-            value: self.value,
-            constraint: Some(constraint),
-        };
+        let tracked = TrackedMut { value: self.value, constraint: Some(constraint) };
         (tracked, self.constraint)
     }
 }
