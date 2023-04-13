@@ -37,12 +37,7 @@ impl<T: Hash + 'static> Prehashed<T> {
     /// Compute an item's hash and wrap it.
     #[inline]
     pub fn new(item: T) -> Self {
-        // Also hash the TypeId because the type might be converted
-        // through an unsized coercion.
-        let mut state = SipHasher::new();
-        item.type_id().hash(&mut state);
-        item.hash(&mut state);
-        Self { hash: state.finish128().as_u128(), item }
+        Self { hash: hash(&item), item }
     }
 
     /// Return the wrapped value.
@@ -50,6 +45,27 @@ impl<T: Hash + 'static> Prehashed<T> {
     pub fn into_inner(self) -> T {
         self.item
     }
+
+    /// Update the wrapped value and recompute the hash.
+    #[inline]
+    pub fn update<F, U>(&mut self, f: F) -> U
+    where
+        F: FnOnce(&mut T) -> U,
+    {
+        let output = f(&mut self.item);
+        self.hash = hash(&self.item);
+        output
+    }
+}
+
+/// Hash the item.
+fn hash<T: Hash + 'static>(item: &T) -> u128 {
+    // Also hash the TypeId because the type might be converted
+    // through an unsized coercion.
+    let mut state = SipHasher::new();
+    item.type_id().hash(&mut state);
+    item.hash(&mut state);
+    state.finish128().as_u128()
 }
 
 impl<T: ?Sized> Deref for Prehashed<T> {
