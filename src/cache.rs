@@ -2,7 +2,7 @@ use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use siphasher::sip128::{Hasher128, SipHasher};
+use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::constraint::Join;
 use crate::input::Input;
@@ -23,7 +23,7 @@ where
     CACHE.with(|cache| {
         // Compute the hash of the input's key part.
         let key = {
-            let mut state = SipHasher::new();
+            let mut state = SipHasher13::new();
             input.key(&mut state);
             let hash = state.finish128().as_u128();
             (id, hash)

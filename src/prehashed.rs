@@ -4,7 +4,7 @@ use std::fmt::{self, Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 
-use siphasher::sip128::{Hasher128, SipHasher};
+use siphasher::sip128::{Hasher128, SipHasher13};
 
 /// A wrapper type with precomputed hash.
 ///
@@ -62,7 +62,7 @@ impl<T: Hash + 'static> Prehashed<T> {
 fn hash<T: Hash + 'static>(item: &T) -> u128 {
     // Also hash the TypeId because the type might be converted
     // through an unsized coercion.
-    let mut state = SipHasher::new();
+    let mut state = SipHasher13::new();
     item.type_id().hash(&mut state);
     item.hash(&mut state);
     state.finish128().as_u128()
