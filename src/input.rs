@@ -1,9 +1,7 @@
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
 
-use crate::constraint::{Constraint, Join};
-use crate::internal::Family;
-use crate::track::{Track, Tracked, TrackedMut};
+use crate::cache::Join;
+use crate::track::{Track, Tracked, TrackedMut, Validate};
 
 /// Ensure a type is suitable as input.
 #[inline]
@@ -14,11 +12,13 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
 pub trait Input {
-    /// Describes an instance of this input.
-    type Constraint: Default + Join + 'static;
+    /// The constraints for this input.
+    type Constraint: Default + Clone + Join + 'static;
 
     /// The input with new constraints hooked in.
-    type Tracked: for<'a> Family<'a>;
+    type Tracked<'r>
+    where
+        Self: 'r;
 
     /// The extracted outer constraints.
     type Outer: Join<Self::Constraint>;
@@ -27,7 +27,7 @@ pub trait Input {
     fn key<H: Hasher>(&self, state: &mut H);
 
     /// Validate the tracked parts of the input.
-    fn valid(&self, constraint: &Self::Constraint) -> bool;
+    fn validate(&self, constraint: &Self::Constraint) -> bool;
 
     /// Replay mutations to the input.
     fn replay(&mut self, constraint: &Self::Constraint);
@@ -37,18 +37,15 @@ pub trait Input {
     fn retrack<'r>(
         self,
         constraint: &'r Self::Constraint,
-    ) -> (<Self::Tracked as Family<'r>>::Out, Self::Outer)
+    ) -> (Self::Tracked<'r>, Self::Outer)
     where
         Self: 'r;
 }
 
-impl<T> Input for T
-where
-    T: Hash,
-{
+impl<T: Hash> Input for T {
     // No constraint for hashed inputs.
     type Constraint = ();
-    type Tracked = IdFamily<Self>;
+    type Tracked<'r> = Self where Self: 'r;
     type Outer = ();
 
     #[inline]
@@ -57,7 +54,7 @@ where
     }
 
     #[inline]
-    fn valid(&self, _: &()) -> bool {
+    fn validate(&self, _: &()) -> bool {
         true
     }
 
@@ -65,7 +62,7 @@ where
     fn replay(&mut self, _: &Self::Constraint) {}
 
     #[inline]
-    fn retrack<'r>(self, _: &'r ()) -> (Self, ())
+    fn retrack<'r>(self, _: &'r ()) -> (Self::Tracked<'r>, Self::Outer)
     where
         Self: 'r,
     {
@@ -73,28 +70,21 @@ where
     }
 }
 
-/// Identity type constructor.
-pub struct IdFamily<T>(PhantomData<T>);
-
-impl<T> Family<'_> for IdFamily<T> {
-    type Out = T;
-}
-
 impl<'a, T> Input for Tracked<'a, T>
 where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = Constraint<T>;
-    type Tracked = TrackedFamily<T>;
-    type Outer = Option<&'a Constraint<T>>;
+    type Constraint = <T as Validate>::Constraint;
+    type Tracked<'r> = Tracked<'r, T> where Self: 'r;
+    type Outer = Option<&'a Self::Constraint>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn valid(&self, constraint: &Self::Constraint) -> bool {
-        self.value.valid(constraint)
+    fn validate(&self, constraint: &Self::Constraint) -> bool {
+        self.value.validate_with_id(constraint, self.id)
     }
 
     #[inline]
@@ -104,23 +94,17 @@ where
     fn retrack<'r>(
         self,
         constraint: &'r Self::Constraint,
-    ) -> (Tracked<'r, T>, Option<&'a Constraint<T>>)
+    ) -> (Self::Tracked<'r>, Self::Outer)
     where
         Self: 'r,
     {
-        let tracked = Tracked { value: self.value, constraint: Some(constraint) };
+        let tracked = Tracked {
+            value: self.value,
+            constraint: Some(constraint),
+            id: self.id,
+        };
         (tracked, self.constraint)
     }
-}
-
-/// Type constructor for `'a -> Tracked<'a, T>`.
-pub struct TrackedFamily<T: ?Sized>(PhantomData<T>);
-
-impl<'a, T> Family<'a> for TrackedFamily<T>
-where
-    T: Track + ?Sized + 'a,
-{
-    type Out = Tracked<'a, T>;
 }
 
 impl<'a, T> Input for TrackedMut<'a, T>
@@ -128,16 +112,16 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = Constraint<T>;
-    type Tracked = TrackedMutFamily<T>;
-    type Outer = Option<&'a Constraint<T>>;
+    type Constraint = T::Constraint;
+    type Tracked<'r> = TrackedMut<'r, T> where Self: 'r;
+    type Outer = Option<&'a Self::Constraint>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn valid(&self, constraint: &Self::Constraint) -> bool {
-        self.value.valid(constraint)
+    fn validate(&self, constraint: &Self::Constraint) -> bool {
+        self.value.validate(constraint)
     }
 
     #[inline]
@@ -149,7 +133,7 @@ where
     fn retrack<'r>(
         self,
         constraint: &'r Self::Constraint,
-    ) -> (TrackedMut<'r, T>, Option<&'a Constraint<T>>)
+    ) -> (Self::Tracked<'r>, Self::Outer)
     where
         Self: 'r,
     {
@@ -158,28 +142,15 @@ where
     }
 }
 
-/// Type constructor for `'a -> TrackedMut<'a, T>`.
-pub struct TrackedMutFamily<T: ?Sized>(PhantomData<T>);
-
-impl<'a, T> Family<'a> for TrackedMutFamily<T>
-where
-    T: Track + ?Sized + 'a,
-{
-    type Out = TrackedMut<'a, T>;
-}
-
 /// Wrapper for multiple inputs.
 pub struct Args<T>(pub T);
-
-/// Type constructor that maps a lifetime to tuple of arguments.
-pub struct ArgsFamily<T>(PhantomData<T>);
 
 macro_rules! args_input {
     ($($param:tt $alt:tt $idx:tt ),*) => {
         #[allow(unused_variables, non_snake_case)]
         impl<$($param: Input),*> Input for Args<($($param,)*)> {
             type Constraint = ($($param::Constraint,)*);
-            type Tracked = ArgsFamily<($($param,)*)>;
+            type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
             type Outer = ($($param::Outer,)*);
 
             #[inline]
@@ -188,8 +159,8 @@ macro_rules! args_input {
             }
 
             #[inline]
-            fn valid(&self, constraint: &Self::Constraint) -> bool {
-                true $(&& (self.0).$idx.valid(&constraint.$idx))*
+            fn validate(&self, constraint: &Self::Constraint) -> bool {
+                true $(&& (self.0).$idx.validate(&constraint.$idx))*
             }
 
             #[inline]
@@ -201,7 +172,7 @@ macro_rules! args_input {
             fn retrack<'r>(
                 self,
                 constraint: &'r Self::Constraint,
-            ) -> (<Self::Tracked as Family<'r>>::Out, Self::Outer)
+            ) -> (Self::Tracked<'r>, Self::Outer)
             where
                 Self: 'r,
             {
@@ -210,16 +181,16 @@ macro_rules! args_input {
             }
         }
 
-        #[allow(unused_parens)]
-        impl<'a, $($param: Input),*> Family<'a> for ArgsFamily<($($param,)*)> {
-            type Out = ($(<$param::Tracked as Family<'a>>::Out,)*);
-        }
-
-        #[allow(unused_variables)]
+        #[allow(unused_variables, clippy::unused_unit)]
         impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
             #[inline]
             fn join(&self, constraint: &($($alt,)*)) {
                 $(self.$idx.join(&constraint.$idx);)*
+            }
+
+            #[inline]
+            fn take(&self) -> Self {
+                ($(self.$idx.take(),)*)
             }
         }
     };

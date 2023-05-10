@@ -1,19 +1,18 @@
 use std::fmt::{self, Debug, Formatter};
 use std::ops::{Deref, DerefMut};
 
-use crate::constraint::Constraint;
-use crate::internal::Family;
+use crate::cache::{id, Join};
 
 /// A trackable type.
 ///
 /// This is implemented by types that have an implementation block annotated
 /// with `#[track]` and for trait objects whose traits are annotated with
 /// `#[track]`. For more details, see [its documentation](macro@crate::track).
-pub trait Track: Trackable {
+pub trait Track: Validate + Surfaces {
     /// Start tracking all accesses to a value.
     #[inline]
     fn track(&self) -> Tracked<Self> {
-        Tracked { value: self, constraint: None }
+        Tracked { value: self, constraint: None, id: id() }
     }
 
     /// Start tracking all accesses and mutations to a value.
@@ -24,57 +23,83 @@ pub trait Track: Trackable {
 
     /// Start tracking all accesses into a constraint.
     #[inline]
-    fn track_with<'a>(&'a self, constraint: &'a Constraint<Self>) -> Tracked<'a, Self> {
-        Tracked { value: self, constraint: Some(constraint) }
+    fn track_with<'a>(&'a self, constraint: &'a Self::Constraint) -> Tracked<'a, Self> {
+        Tracked {
+            value: self,
+            constraint: Some(constraint),
+            id: id(),
+        }
     }
 
     /// Start tracking all accesses and mutations into a constraint.
     #[inline]
     fn track_mut_with<'a>(
         &'a mut self,
-        constraint: &'a Constraint<Self>,
+        constraint: &'a Self::Constraint,
     ) -> TrackedMut<'a, Self> {
         TrackedMut { value: self, constraint: Some(constraint) }
     }
+}
+
+/// A type that can be validated against constraints.
+///
+/// Typical crate usage does not require you to interact with its trait.
+/// However, it can be useful if you want to integrate comemo's tracking and
+/// constraint validation mechanism directly into your code.
+///
+/// This trait is implemented by the `#[track]` macro alongside [`Track`].
+pub trait Validate {
+    /// The constraints for this type.
+    type Constraint: Default + Clone + Join + 'static;
 
     /// Whether this value fulfills the given constraints.
     ///
-    /// Such constraints can be generated with `track_with` or `track_mut_with`.
-    fn valid(&self, constraint: &Constraint<Self>) -> bool;
+    /// For a type `Foo`, empty constraints can be created with `<Foo as
+    /// Validate>::Constraint::default()` and filled with
+    /// [`track_with`](Track::track_with) or
+    /// [`track_mut_with`](Track::track_mut_with).
+    fn validate(&self, constraint: &Self::Constraint) -> bool;
+
+    /// Accelerated version of [`validate`](Self::validate).
+    ///
+    /// A `id` uniquely identifies a value to speed up repeated validation of
+    /// equal constraints against the same value. If given the same `id` twice,
+    /// `self` must also be identical, unless [`evict`](crate::evict) has been
+    /// called in between.
+    fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool;
+
+    /// Replay recorded mutations to the value.
+    fn replay(&mut self, constraint: &Self::Constraint);
 }
 
-/// Non-exposed parts of the `Track` trait.
-pub trait Trackable: 'static {
-    /// Encodes a function call on this type.
-    type Call: Clone + PartialEq + 'static;
-
+/// This type's tracked surfaces.
+pub trait Surfaces {
     /// The tracked API surface of this type.
-    type Surface: for<'a> Family<'a>;
+    type Surface<'a>
+    where
+        Self: 'a;
 
     /// The mutable tracked API surface of this type.
-    type SurfaceMut: for<'a> Family<'a>;
-
-    /// Replay mutations to the value.
-    fn replay(&mut self, constraint: &Constraint<Self>);
+    type SurfaceMut<'a>
+    where
+        Self: 'a;
 
     /// Access the immutable surface from a `Tracked`.
-    fn surface_ref<'a, 't>(
-        tracked: &'t Tracked<'a, Self>,
-    ) -> &'t <Self::Surface as Family<'a>>::Out
+    fn surface_ref<'a, 't>(tracked: &'t Tracked<'a, Self>) -> &'t Self::Surface<'a>
     where
         Self: Track;
 
     /// Access the immutable surface from a `TrackedMut`.
     fn surface_mut_ref<'a, 't>(
         tracked: &'t TrackedMut<'a, Self>,
-    ) -> &'t <Self::SurfaceMut as Family<'a>>::Out
+    ) -> &'t Self::SurfaceMut<'a>
     where
         Self: Track;
 
     /// Access the mutable surface from a `TrackedMut`.
     fn surface_mut_mut<'a, 't>(
         tracked: &'t mut TrackedMut<'a, Self>,
-    ) -> &'t mut <Self::SurfaceMut as Family<'a>>::Out
+    ) -> &'t mut Self::SurfaceMut<'a>
     where
         Self: Track;
 }
@@ -85,7 +110,36 @@ pub trait Trackable: 'static {
 /// methods accessible on `Tracked<T>` are those defined in an implementation
 /// block or trait for `T` annotated with `#[track]`. For more details, see [its
 /// documentation](macro@crate::track).
-pub struct Tracked<'a, T>
+///
+/// ## Variance
+/// Typically you can ignore the defaulted `C` parameter. However, due to
+/// compiler limitations, this type will then be invariant over `T`. This limits
+/// how it can be used. In particular, invariance prevents you from creating a
+/// usable _chain_ of tracked types.
+///
+/// ```ignore
+/// struct Chain<'a> {
+///     outer: Tracked<'a, Self>,
+///     data: u32, // some data for the chain link
+/// }
+/// ```
+///
+/// However, this is sometimes a useful pattern (for example, it allows you to
+/// detect cycles in memoized recursive algorithms). If you want to create a
+/// tracked chain or need covariance for another reason, you need to manually
+/// specify the constraint type like so:
+///
+/// ```ignore
+/// struct Chain<'a> {
+///     outer: Tracked<'a, Self, <Chain<'static> as Validate>::Constraint>,
+///     data: u32, // some data for the chain link
+/// }
+/// ```
+///
+/// Notice the `'static` lifetime: This makes the compiler understand that no
+/// strange business that depends on `'a` is happening in the associated
+/// constraint type. (In fact, all constraints are `'static`.)
+pub struct Tracked<'a, T, C = <T as Validate>::Constraint>
 where
     T: Track + ?Sized,
 {
@@ -96,7 +150,9 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) constraint: Option<&'a Constraint<T>>,
+    pub(crate) constraint: Option<&'a C>,
+    /// A unique ID for validation acceleration.
+    pub(crate) id: usize,
 }
 
 // The type `Tracked<T>` automatically dereferences to T's generated surface
@@ -106,7 +162,7 @@ impl<'a, T> Deref for Tracked<'a, T>
 where
     T: Track + ?Sized,
 {
-    type Target = <T::Surface as Family<'a>>::Out;
+    type Target = T::Surface<'a>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -142,7 +198,9 @@ where
 /// The only methods accessible on `TrackedMut<T>` are those defined in an
 /// implementation block or trait for `T` annotated with `#[track]`. For more
 /// details, see [its documentation](macro@crate::track).
-pub struct TrackedMut<'a, T>
+///
+/// For more details, see [`Tracked`].
+pub struct TrackedMut<'a, T, C = <T as Validate>::Constraint>
 where
     T: Track + ?Sized,
 {
@@ -153,7 +211,7 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) constraint: Option<&'a Constraint<T>>,
+    pub(crate) constraint: Option<&'a C>,
 }
 
 impl<'a, T> TrackedMut<'a, T>
@@ -166,7 +224,11 @@ where
     /// defined on `T`. It should be called as `TrackedMut::downgrade(...)`.
     #[inline]
     pub fn downgrade(this: Self) -> Tracked<'a, T> {
-        Tracked { value: this.value, constraint: this.constraint }
+        Tracked {
+            value: this.value,
+            constraint: this.constraint,
+            id: id(),
+        }
     }
 
     /// Reborrow with a shorter lifetime.
@@ -175,7 +237,11 @@ where
     /// defined on `T`. It should be called as `TrackedMut::reborrow(...)`.
     #[inline]
     pub fn reborrow(this: &Self) -> Tracked<'_, T> {
-        Tracked { value: this.value, constraint: this.constraint }
+        Tracked {
+            value: this.value,
+            constraint: this.constraint,
+            id: id(),
+        }
     }
 
     /// Reborrow mutably with a shorter lifetime.
@@ -192,7 +258,7 @@ impl<'a, T> Deref for TrackedMut<'a, T>
 where
     T: Track + ?Sized,
 {
-    type Target = <T::SurfaceMut as Family<'a>>::Out;
+    type Target = T::SurfaceMut<'a>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -222,7 +288,7 @@ where
 
 /// Destructure a `Tracked<_>` into its parts.
 #[inline]
-pub fn to_parts_ref<T>(tracked: Tracked<T>) -> (&T, Option<&Constraint<T>>)
+pub fn to_parts_ref<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
 where
     T: Track + ?Sized,
 {
@@ -233,7 +299,7 @@ where
 #[inline]
 pub fn to_parts_mut_ref<'a, T>(
     tracked: &'a TrackedMut<T>,
-) -> (&'a T, Option<&'a Constraint<T>>)
+) -> (&'a T, Option<&'a T::Constraint>)
 where
     T: Track + ?Sized,
 {
@@ -244,7 +310,7 @@ where
 #[inline]
 pub fn to_parts_mut_mut<'a, T>(
     tracked: &'a mut TrackedMut<T>,
-) -> (&'a mut T, Option<&'a Constraint<T>>)
+) -> (&'a mut T, Option<&'a T::Constraint>)
 where
     T: Track + ?Sized,
 {

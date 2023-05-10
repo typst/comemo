@@ -67,10 +67,7 @@ fn prepare_arg(input: &syn::FnArg) -> Result<Argument> {
                 mutability: Some(_), ..
             }) = typed.ty.as_ref()
             {
-                bail!(
-                    typed.ty,
-                    "memoized functions cannot have mutable parameters"
-                )
+                bail!(typed.ty, "memoized functions cannot have mutable parameters")
             }
 
             Argument::Ident(mutability.clone(), ident.clone())
@@ -127,6 +124,7 @@ fn process(function: &Function) -> Result<TokenStream> {
         ::comemo::internal::memoized(
             ::core::any::TypeId::of::<#unique>(),
             ::comemo::internal::Args(#arg_tuple),
+            &::core::default::Default::default(),
             #closure,
         )
     } };
