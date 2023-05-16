@@ -1,6 +1,6 @@
 [package]
 name = "comemo"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Laurenz <laurmaedje@gmail.com>"]
 edition = "2021"
 description = "Incremental computation through constrained memoization."
@@ -11,5 +11,5 @@ categories = ["caching"]
 keywords = ["incremental", "memoization", "tracked", "constraints"]
 
 [dependencies]
-comemo-macros = { version = "0.2.2", path = "macros" }
+comemo-macros = { version = "0.3", path = "macros" }
 siphasher = "0.3"
