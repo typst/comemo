@@ -59,7 +59,7 @@ with more fine-grained access tracking. To use it, we can just:
 
 This instructs comemo to memoize the evaluation and to automatically track all
 file accesses during a memoized call. As a result, we can reuse the result of a
-`.calc` script evaluation as as long as its dependencies stay the same—even if
+`.calc` script evaluation as long as its dependencies stay the same—even if
 other files change.
 
 ```rust
