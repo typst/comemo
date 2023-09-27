@@ -1,6 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use crate::cache::Join;
+use crate::constraint::Join;
 use crate::track::{Track, Tracked, TrackedMut, Validate};
 
 /// Ensure a type is suitable as input.
@@ -13,7 +13,7 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// types containing tuples up to length twelve.
 pub trait Input {
     /// The constraints for this input.
-    type Constraint: Default + Clone + Join + 'static;
+    type Constraint: Default + Clone + Join + Send + Sync + 'static;
 
     /// The input with new constraints hooked in.
     type Tracked<'r>

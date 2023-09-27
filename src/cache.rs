@@ -1,25 +1,10 @@
 use std::any::{Any, TypeId};
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use siphasher::sip128::{Hasher128, SipHasher13};
 
+use crate::constraint::Join;
 use crate::input::Input;
-
-thread_local! {
-    /// The global, dynamic cache shared by all memoized functions.
-    static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
-
-    /// The global ID counter for tracked values. Each tracked value gets a
-    /// unqiue ID based on which its validations are cached in the accelerator.
-    /// IDs may only be reused upon eviction of the accelerator.
-    static ID: Cell<usize> = const { Cell::new(0) };
-
-    /// The global, dynamic accelerator shared by all cached values.
-    static ACCELERATOR: RefCell<HashMap<(usize, u128), u128>>
-        = RefCell::new(HashMap::default());
-}
 
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
@@ -30,64 +15,56 @@ pub fn memoized<'c, In, Out, F>(
 ) -> Out
 where
     In: Input + 'c,
-    Out: Clone + 'static,
+    Out: Clone + Send + Sync + 'static,
     F: FnOnce(In::Tracked<'c>) -> Out,
 {
-    CACHE.with(|cache| {
-        // Compute the hash of the input's key part.
-        let key = {
-            let mut state = SipHasher13::new();
-            input.key(&mut state);
-            let hash = state.finish128().as_u128();
-            (id, hash)
-        };
+    // Compute the hash of the input's key part.
+    let key = {
+        let mut state = SipHasher13::new();
+        input.key(&mut state);
+        let hash = state.finish128().as_u128();
+        (id, hash)
+    };
 
-        // Check if there is a cached output.
-        let mut borrow = cache.borrow_mut();
-        if let Some(constrained) = borrow.lookup::<In, Out>(key, &input) {
-            // Replay the mutations.
-            input.replay(&constrained.constraint);
+    // Check if there is a cached output.
+    if let Some(constrained) = crate::CACHE.get(&key).and_then(|entries| {
+        entries
+            .try_map(|value| {
+                value.iter().rev().find_map(|entry| entry.lookup::<In, Out>(&input))
+            })
+            .ok()
+    }) {
+        // Replay the mutations.
+        input.replay(&constrained.constraint);
 
-            // Add the cached constraints to the outer ones.
-            input.retrack(constraint).1.join(&constrained.constraint);
+        // Add the cached constraints to the outer ones.
+        input.retrack(constraint).1.join(&constrained.constraint);
 
-            let value = constrained.output.clone();
-            borrow.last_was_hit = true;
-            return value;
-        }
+        let value = constrained.output.clone();
+        crate::LAST_WAS_HIT.with(|hit| hit.set(true));
+        return value;
+    }
 
-        // Release the borrow so that nested memoized calls can access the
-        // cache without panicking.
-        drop(borrow);
+    // Execute the function with the new constraints hooked in.
+    let (input, outer) = input.retrack(constraint);
+    let output = func(input);
 
-        // Execute the function with the new constraints hooked in.
-        let (input, outer) = input.retrack(constraint);
-        let output = func(input);
+    // Add the new constraints to the outer ones.
+    outer.join(constraint);
 
-        // Add the new constraints to the outer ones.
-        outer.join(constraint);
+    // Insert the result into the cache.
+    crate::LAST_WAS_HIT.with(|cell| cell.set(false));
+    crate::CACHE
+        .entry(key)
+        .or_default()
+        .push(CacheEntry::new::<In, Out>(constraint.take(), output.clone()));
 
-        // Insert the result into the cache.
-        borrow = cache.borrow_mut();
-        borrow.insert::<In, Out>(key, constraint.take(), output.clone());
-        borrow.last_was_hit = false;
-
-        output
-    })
+    output
 }
 
 /// Whether the last call was a hit.
 pub fn last_was_hit() -> bool {
-    CACHE.with(|cache| cache.borrow().last_was_hit)
-}
-
-/// Get the next ID.
-pub fn id() -> usize {
-    ID.with(|cell| {
-        let current = cell.get();
-        cell.set(current.wrapping_add(1));
-        current
-    })
+    crate::LAST_WAS_HIT.with(|cell| cell.get())
 }
 
 /// Evict the cache.
@@ -100,71 +77,25 @@ pub fn id() -> usize {
 /// Comemo's cache is thread-local, meaning that this only evicts this thread's
 /// cache.
 pub fn evict(max_age: usize) {
-    CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache.map.retain(|_, entries| {
-            entries.retain_mut(|entry| {
-                entry.age += 1;
-                entry.age <= max_age
-            });
-            !entries.is_empty()
+    crate::CACHE.retain(|_, entries| {
+        entries.retain_mut(|entry| {
+            let age = entry.age.fetch_add(1, Ordering::Relaxed);
+            age < max_age
         });
+        !entries.is_empty()
     });
-    ACCELERATOR.with(|accelerator| accelerator.borrow_mut().clear());
-}
-
-/// The global cache.
-#[derive(Default)]
-struct Cache {
-    /// Maps from function IDs + hashes to memoized results.
-    map: HashMap<(TypeId, u128), Vec<CacheEntry>>,
-    /// Whether the last call was a hit.
-    last_was_hit: bool,
-}
-
-impl Cache {
-    /// Look for a matching entry in the cache.
-    fn lookup<In, Out>(
-        &mut self,
-        key: (TypeId, u128),
-        input: &In,
-    ) -> Option<&Constrained<In::Constraint, Out>>
-    where
-        In: Input,
-        Out: Clone + 'static,
-    {
-        self.map
-            .get_mut(&key)?
-            .iter_mut()
-            .rev()
-            .find_map(|entry| entry.lookup::<In, Out>(input))
-    }
-
-    /// Insert an entry into the cache.
-    fn insert<In, Out>(
-        &mut self,
-        key: (TypeId, u128),
-        constraint: In::Constraint,
-        output: Out,
-    ) where
-        In: Input,
-        Out: 'static,
-    {
-        self.map
-            .entry(key)
-            .or_default()
-            .push(CacheEntry::new::<In, Out>(constraint, output));
-    }
+    crate::ACCELERATOR.clear();
+    crate::ID.store(0, Ordering::SeqCst);
 }
 
 /// A memoized result.
-struct CacheEntry {
+pub struct CacheEntry {
     /// The memoized function's constrained output.
     ///
     /// This is of type `Constrained<In::Constraint, Out>`.
-    constrained: Box<dyn Any>,
+    constrained: Box<dyn Any + Send + Sync>,
     /// How many evictions have passed since the entry has been last used.
-    age: usize,
+    age: AtomicUsize,
 }
 
 /// A value with a constraint.
@@ -180,16 +111,16 @@ impl CacheEntry {
     fn new<In, Out>(constraint: In::Constraint, output: Out) -> Self
     where
         In: Input,
-        Out: 'static,
+        Out: Send + Sync + 'static,
     {
         Self {
             constrained: Box::new(Constrained { constraint, output }),
-            age: 0,
+            age: AtomicUsize::new(0),
         }
     }
 
     /// Return the entry's output if it is valid for the given input.
-    fn lookup<In, Out>(&mut self, input: &In) -> Option<&Constrained<In::Constraint, Out>>
+    fn lookup<In, Out>(&self, input: &In) -> Option<&Constrained<In::Constraint, Out>>
     where
         In: Input,
         Out: Clone + 'static,
@@ -198,162 +129,8 @@ impl CacheEntry {
             self.constrained.downcast_ref().expect("wrong entry type");
 
         input.validate(&constrained.constraint).then(|| {
-            self.age = 0;
+            self.age.store(0, Ordering::Relaxed);
             constrained
         })
-    }
-}
-
-/// Defines a constraint for a tracked type.
-#[derive(Clone)]
-pub struct Constraint<T>(RefCell<Vec<Call<T>>>);
-
-/// A call entry.
-#[derive(Clone)]
-struct Call<T> {
-    args: T,
-    ret: u128,
-    both: u128,
-    mutable: bool,
-}
-
-impl<T: Hash + PartialEq> Constraint<T> {
-    /// Create empty constraints.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Enter a constraint for a call to an immutable function.
-    #[inline]
-    pub fn push(&self, args: T, ret: u128, mutable: bool) {
-        let both = hash(&(&args, ret));
-        self.push_inner(Call { args, ret, both, mutable });
-    }
-
-    /// Enter a constraint for a call to an immutable function.
-    #[inline]
-    fn push_inner(&self, call: Call<T>) {
-        let mut calls = self.0.borrow_mut();
-
-        if !call.mutable {
-            for prev in calls.iter().rev() {
-                if prev.mutable {
-                    break;
-                }
-
-                #[cfg(debug_assertions)]
-                if prev.args == call.args {
-                    check(prev.ret, call.ret);
-                }
-
-                if prev.both == call.both {
-                    return;
-                }
-            }
-        }
-
-        calls.push(call);
-    }
-
-    /// Whether the method satisfies as all input-output pairs.
-    #[inline]
-    pub fn validate<F>(&self, mut f: F) -> bool
-    where
-        F: FnMut(&T) -> u128,
-    {
-        self.0.borrow().iter().all(|entry| f(&entry.args) == entry.ret)
-    }
-
-    /// Whether the method satisfies as all input-output pairs.
-    #[inline]
-    pub fn validate_with_id<F>(&self, mut f: F, id: usize) -> bool
-    where
-        F: FnMut(&T) -> u128,
-    {
-        let calls = self.0.borrow();
-        ACCELERATOR.with(|accelerator| {
-            let mut map = accelerator.borrow_mut();
-            calls.iter().all(|entry| {
-                *map.entry((id, entry.both)).or_insert_with(|| f(&entry.args))
-                    == entry.ret
-            })
-        })
-    }
-
-    /// Replay all input-output pairs.
-    #[inline]
-    pub fn replay<F>(&self, mut f: F)
-    where
-        F: FnMut(&T),
-    {
-        for entry in self.0.borrow().iter() {
-            if entry.mutable {
-                f(&entry.args);
-            }
-        }
-    }
-}
-
-impl<T> Default for Constraint<T> {
-    fn default() -> Self {
-        Self(RefCell::new(vec![]))
-    }
-}
-
-/// Extend an outer constraint by an inner one.
-pub trait Join<T = Self> {
-    /// Join this constraint with the `inner` one.
-    fn join(&self, inner: &T);
-
-    /// Take out the constraint.
-    fn take(&self) -> Self;
-}
-
-impl<T: Join> Join<T> for Option<&T> {
-    #[inline]
-    fn join(&self, inner: &T) {
-        if let Some(outer) = self {
-            outer.join(inner);
-        }
-    }
-
-    #[inline]
-    fn take(&self) -> Self {
-        unimplemented!("cannot call `Join::take` on optional constraint")
-    }
-}
-
-impl<T: Hash + Clone + PartialEq> Join for Constraint<T> {
-    #[inline]
-    fn join(&self, inner: &Self) {
-        for call in inner.0.borrow().iter() {
-            self.push_inner(call.clone());
-        }
-    }
-
-    #[inline]
-    fn take(&self) -> Self {
-        Self(RefCell::new(std::mem::take(&mut *self.0.borrow_mut())))
-    }
-}
-
-/// Produce a 128-bit hash of a value.
-#[inline]
-pub fn hash<T: Hash>(value: &T) -> u128 {
-    let mut state = SipHasher13::new();
-    value.hash(&mut state);
-    state.finish128().as_u128()
-}
-
-/// Check for a constraint violation.
-#[inline]
-#[track_caller]
-#[allow(dead_code)]
-fn check(left_hash: u128, right_hash: u128) {
-    if left_hash != right_hash {
-        panic!(
-            "comemo: found conflicting constraints. \
-             is this tracked function pure?"
-        )
     }
 }

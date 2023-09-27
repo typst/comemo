@@ -1,7 +1,8 @@
 use std::fmt::{self, Debug, Formatter};
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::Ordering;
 
-use crate::cache::{id, Join};
+use crate::constraint::Join;
 
 /// A trackable type.
 ///
@@ -50,7 +51,7 @@ pub trait Track: Validate + Surfaces {
 /// This trait is implemented by the `#[track]` macro alongside [`Track`].
 pub trait Validate {
     /// The constraints for this type.
-    type Constraint: Default + Clone + Join + 'static;
+    type Constraint: Default + Clone + Join + Send + Sync + 'static;
 
     /// Whether this value fulfills the given constraints.
     ///
@@ -315,4 +316,9 @@ where
     T: Track + ?Sized,
 {
     (tracked.value, tracked.constraint)
+}
+
+/// Get the next ID.
+fn id() -> usize {
+    crate::ID.fetch_add(1, Ordering::Relaxed)
 }

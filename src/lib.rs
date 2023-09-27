@@ -82,7 +82,24 @@ For the full example see [`examples/calc.rs`][calc].
 [calc]: https://github.com/typst/comemo/blob/main/examples/calc.rs
 */
 
+/// The global, dynamic cache shared by all memoized functions.
+static CACHE: Lazy<DashMap<(TypeId, u128), Vec<CacheEntry>>> = Lazy::new(DashMap::new);
+
+/// The global, dynamic accelerator shared by all cached values.
+static ACCELERATOR: Lazy<DashMap<(usize, u128), u128>> = Lazy::new(DashMap::new);
+
+/// The global ID counter for tracked values. Each tracked value gets a
+/// unqiue ID based on which its validations are cached in the accelerator.
+/// IDs may only be reused upon eviction of the accelerator.
+static ID: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    /// Whether the last call on this thread was a hit.
+    static LAST_WAS_HIT: Cell<bool> = Cell::new(false);
+}
+
 mod cache;
+mod constraint;
 mod input;
 mod prehashed;
 mod track;
@@ -92,10 +109,20 @@ pub use crate::prehashed::Prehashed;
 pub use crate::track::{Track, Tracked, TrackedMut, Validate};
 pub use comemo_macros::{memoize, track};
 
+use std::any::TypeId;
+use std::cell::Cell;
+use std::sync::atomic::AtomicUsize;
+
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+
+use self::cache::CacheEntry;
+
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::cache::{hash, last_was_hit, memoized, Constraint};
+    pub use crate::cache::{last_was_hit, memoized};
+    pub use crate::constraint::{hash, Constraint};
     pub use crate::input::{assert_hashable_or_trackable, Args};
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Surfaces};
 }

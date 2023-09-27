@@ -36,7 +36,7 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
             }
 
             let name = &item.ident;
-            let ty = parse_quote! { dyn #name + '__comemo_dynamic };
+            let ty = parse_quote! { dyn #name + Send + Sync + '__comemo_dynamic };
             (ty, &item.generics, Some(name.clone()))
         }
         _ => bail!(item, "`track` can only be applied to impl blocks and traits"),
