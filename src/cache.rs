@@ -14,7 +14,7 @@ thread_local! {
     /// The global ID counter for tracked values. Each tracked value gets a
     /// unqiue ID based on which its validations are cached in the accelerator.
     /// IDs may only be reused upon eviction of the accelerator.
-    static ID: Cell<usize> = Cell::new(0);
+    static ID: Cell<usize> = const { Cell::new(0) };
 
     /// The global, dynamic accelerator shared by all cached values.
     static ACCELERATOR: RefCell<HashMap<(usize, u128), u128>>
