@@ -136,6 +136,7 @@ impl Cache {
         self.map
             .get_mut(&key)?
             .iter_mut()
+            .rev()
             .find_map(|entry| entry.lookup::<In, Out>(input))
     }
 
