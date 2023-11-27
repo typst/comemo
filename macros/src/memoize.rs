@@ -59,7 +59,8 @@ fn prepare_arg(input: &syn::FnArg) -> Result<Argument> {
                 ident,
                 subpat: None,
                 ..
-            }) = typed.pat.as_ref() else {
+            }) = typed.pat.as_ref()
+            else {
                 bail!(typed.pat, "only simple identifiers are supported");
             };
 

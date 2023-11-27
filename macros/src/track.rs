@@ -133,7 +133,8 @@ fn prepare_method(vis: syn::Visibility, sig: &syn::Signature) -> Result<Method> 
             ident,
             subpat: None,
             ..
-        }) = typed.pat.as_ref() else {
+        }) = typed.pat.as_ref()
+        else {
             bail!(typed.pat, "only simple identifiers are supported");
         };
 
