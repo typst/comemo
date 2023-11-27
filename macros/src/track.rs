@@ -69,7 +69,7 @@ enum Kind {
 
 /// Preprocess and validate a method in an impl block.
 fn prepare_impl_method(item: &syn::ImplItem) -> Result<Method> {
-    let syn::ImplItem::Method(method) = item else {
+    let syn::ImplItem::Fn(method) = item else {
         bail!(item, "only methods can be tracked");
     };
 
@@ -78,7 +78,7 @@ fn prepare_impl_method(item: &syn::ImplItem) -> Result<Method> {
 
 /// Preprocess and validate a method in a trait.
 fn prepare_trait_method(item: &syn::TraitItem) -> Result<Method> {
-    let syn::TraitItem::Method(method) = item else {
+    let syn::TraitItem::Fn(method) = item else {
         bail!(item, "only methods can be tracked");
     };
 
