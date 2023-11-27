@@ -12,4 +12,4 @@ keywords = ["incremental", "memoization", "tracked", "constraints"]
 
 [dependencies]
 comemo-macros = { version = "0.3", path = "macros" }
-siphasher = "0.3"
+siphasher = "1"
