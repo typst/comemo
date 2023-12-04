@@ -95,7 +95,11 @@ pub use comemo_macros::{memoize, track};
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::cache::{hash, last_was_hit, memoized, Constraint};
-    pub use crate::input::{assert_hashable_or_trackable, Args};
+    pub use crate::cache::{
+        hash, last_was_hit, memoized, register_cache, Cache, Constraint,
+        ImmutableConstraint,
+    };
+    pub use crate::input::{assert_hashable_or_trackable, Args, Input};
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Surfaces};
+    pub use once_cell::sync::Lazy;
 }

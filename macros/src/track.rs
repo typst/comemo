@@ -244,11 +244,16 @@ fn create(
         .map(|m| create_wrapper(m, false));
     let wrapper_methods_mut = methods.iter().map(|m| create_wrapper(m, true));
 
+    let constraint = if methods.iter().all(|m| !m.mutable) {
+        quote! { ImmutableConstraint }
+    } else {
+        quote! { Constraint }
+    };
     Ok(quote! {
         impl #impl_params ::comemo::Track for #ty  #where_clause {}
 
         impl #impl_params ::comemo::Validate for #ty  #where_clause {
-            type Constraint = ::comemo::internal::Constraint<__ComemoCall>;
+            type Constraint = ::comemo::internal::#constraint<__ComemoCall>;
 
             #[inline]
             fn validate(&self, constraint: &Self::Constraint) -> bool {

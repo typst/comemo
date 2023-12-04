@@ -212,27 +212,12 @@ fn test_kinds() {
         }
     }
 
-    #[memoize]
-    fn generic<T>(tester: Tracky, name: T) -> String
-    where
-        T: AsRef<str> + Hash,
-    {
-        tester.double_ref(name.as_ref()).to_string()
-    }
-
-    #[memoize]
-    fn ignorant(tester: Tracky, name: impl AsRef<str> + Hash) -> String {
-        tester.arg_ref(name.as_ref()).to_string()
-    }
-
     let mut tester = Tester { data: "Hi".to_string() };
 
     let tracky = tester.track();
     test!(miss: selfie(tracky), "Hi");
     test!(miss: unconditional(tracky), "Short");
     test!(hit: unconditional(tracky), "Short");
-    test!(miss: generic(tracky, "World"), "World");
-    test!(miss: ignorant(tracky, "Ignorant"), "Ignorant");
     test!(hit: selfie(tracky), "Hi");
 
     tester.data.push('!');
@@ -240,15 +225,11 @@ fn test_kinds() {
     let tracky = tester.track();
     test!(miss: selfie(tracky), "Hi!");
     test!(miss: unconditional(tracky), "Short");
-    test!(hit: generic(tracky, "World"), "World");
-    test!(hit: ignorant(tracky, "Ignorant"), "Ignorant");
 
     tester.data.push_str(" Let's go.");
 
     let tracky = tester.track();
     test!(miss: unconditional(tracky), "Long");
-    test!(miss: generic(tracky, "World"), "Hi! Let's go.");
-    test!(hit: ignorant(tracky, "Ignorant"), "Ignorant");
 }
 
 /// Test with type alias.
