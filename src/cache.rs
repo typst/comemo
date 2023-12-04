@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::hash::{Hash, BuildHasherDefault};
+use std::hash::{BuildHasherDefault, Hash};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 
@@ -273,7 +273,10 @@ impl<T: Hash + PartialEq + Clone> Constraint<T> {
     #[inline]
     pub fn push(&self, args: T, ret: u128, mutable: bool) {
         let both = hash(&(&args, ret));
-        self.0.write().unwrap().push_inner(Cow::Owned(Call { args, ret, both, mutable }));
+        self.0
+            .write()
+            .unwrap()
+            .push_inner(Cow::Owned(Call { args, ret, both, mutable }));
     }
 
     /// Whether the method satisfies as all input-output pairs.
