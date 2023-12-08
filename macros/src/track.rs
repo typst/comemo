@@ -229,8 +229,9 @@ fn create(
     };
 
     // Prepare replying.
+    let immutable = methods.iter().all(|m| !m.mutable);
     let replays = methods.iter().map(create_replay);
-    let replay = methods.iter().any(|m| m.mutable).then(|| {
+    let replay = (!immutable).then(|| {
         quote! {
             constraint.replay(|call| match &call.0 { #(#replays,)* });
         }

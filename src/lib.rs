@@ -96,10 +96,13 @@ pub use comemo_macros::{memoize, track};
 #[doc(hidden)]
 pub mod internal {
     pub use crate::cache::{
-        hash, last_was_hit, memoized, register_cache, Cache, Constraint,
-        ImmutableConstraint,
+        hash, memoized, register_cache, Cache, Constraint, ImmutableConstraint,
     };
+
     pub use crate::input::{assert_hashable_or_trackable, Args, Input};
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Surfaces};
     pub use once_cell::sync::Lazy;
+
+    #[cfg(feature = "last_was_hit")]
+    pub use crate::cache::last_was_hit;
 }
