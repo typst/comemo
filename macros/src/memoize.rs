@@ -124,7 +124,6 @@ fn process(function: &Function) -> Result<TokenStream> {
         ident.mutability = None;
     }
 
-    let unique = quote! { __ComemoUnique };
     wrapped.block = parse_quote! { {
         static __CACHE: ::comemo::internal::Lazy<
             ::std::sync::RwLock<
@@ -145,7 +144,6 @@ fn process(function: &Function) -> Result<TokenStream> {
             __CACHE.write().unwrap().evict(max_age);
         }
 
-        struct #unique;
         #(#bounds;)*
         ::comemo::internal::memoized(
             ::comemo::internal::Args(#arg_tuple),
