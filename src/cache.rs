@@ -123,10 +123,12 @@ impl<C, Out> Default for Cache<C, Out> {
 }
 
 impl<C, Out: 'static> Cache<C, Out> {
+    /// Create an empty cache.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Evict all entries whose age is larger than or equal to `max_age`.
     pub fn evict(&mut self, max_age: usize) {
         self.entries.retain(|_, entries| {
             entries.retain_mut(|entry| {
@@ -206,7 +208,13 @@ struct Call<T> {
 pub struct Constraint<T>(RwLock<Inner<T>>);
 
 struct Inner<T> {
+    /// The list of calls.
+    ///
+    /// Order matters here, as those are mutable & immutable calls.
     calls: Vec<Call<T>>,
+    /// The hash of the arguments and index of the call.
+    ///
+    /// Order does not matter here, as those are immutable calls.
     immutable: HashMap<u128, usize>,
 }
 
@@ -236,9 +244,7 @@ impl<T: Hash + PartialEq + Clone> Inner<T> {
                 #[cfg(debug_assertions)]
                 {
                     let prev = &self.calls[*_prev];
-                    if prev.args == call.args {
-                        check(prev.ret, call.ret);
-                    }
+                    check(prev.ret, call.ret);
                 }
 
                 return;
