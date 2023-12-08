@@ -237,15 +237,12 @@ impl<T: Hash + PartialEq + Clone> Inner<T> {
     /// Enter a constraint for a call to an immutable function.
     #[inline]
     fn push_inner(&mut self, call: Cow<Call<T>>) {
-        // If the call is not mutable check whether we already have a call
+        // If the call is immutable check whether we already have a call
         // with the same arguments and return value.
         if !call.mutable {
             if let Some(_prev) = self.immutable.get(&call.args_hash) {
                 #[cfg(debug_assertions)]
-                {
-                    let prev = &self.calls[*_prev];
-                    check(prev.ret, call.ret);
-                }
+                check(&self.calls[*_prev], &call);
 
                 return;
             }
@@ -366,9 +363,7 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
 
         if let Some(_prev) = calls.get(&call.args_hash) {
             #[cfg(debug_assertions)]
-            if _prev.args == call.args {
-                check(_prev.ret, call.ret);
-            }
+            check(_prev, &call);
 
             return;
         }
@@ -491,11 +486,23 @@ pub fn hash<T: Hash>(value: &T) -> u128 {
 #[inline]
 #[track_caller]
 #[allow(dead_code)]
-fn check(left_hash: u128, right_hash: u128) {
-    if left_hash != right_hash {
+fn check<T: PartialEq>(lhs: &Call<T>, rhs: &Call<T>) {
+    if lhs.ret != rhs.ret {
         panic!(
             "comemo: found conflicting constraints. \
              is this tracked function pure?"
+        )
+    }
+
+    // Additional checks for debugging.
+    if lhs.args_hash != rhs.args_hash
+        || lhs.args != rhs.args
+        || lhs.both != rhs.both
+        || lhs.mutable != rhs.mutable
+    {
+        panic!(
+            "comemo: found conflicting arguments |
+             this is a bug in comemo"
         )
     }
 }
