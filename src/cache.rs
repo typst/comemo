@@ -66,7 +66,7 @@ where
     }
 
     // Release the borrow so that nested memoized calls can access the
-    // cache without panicking.
+    // cache without dead locking.
     drop(borrow);
 
     // Execute the function with the new constraints hooked in.
