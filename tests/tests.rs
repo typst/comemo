@@ -3,6 +3,7 @@ use std::hash::Hash;
 use std::path::{Path, PathBuf};
 
 use comemo::{evict, memoize, track, Track, Tracked, TrackedMut, Validate};
+use serial_test::serial;
 
 macro_rules! test {
     (miss: $call:expr, $result:expr) => {{
@@ -17,6 +18,7 @@ macro_rules! test {
 
 /// Test basic memoization.
 #[test]
+#[serial]
 fn test_basic() {
     #[memoize]
     fn empty() -> String {
@@ -71,6 +73,7 @@ fn test_basic() {
 
 /// Test the calc language.
 #[test]
+#[serial]
 fn test_calc() {
     #[memoize]
     fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
@@ -116,6 +119,7 @@ impl Files {
 
 /// Test cache eviction.
 #[test]
+#[serial]
 fn test_evict() {
     #[memoize]
     fn null() -> u8 {
@@ -141,6 +145,7 @@ fn test_evict() {
 
 /// Test tracking a trait object.
 #[test]
+#[serial]
 fn test_tracked_trait() {
     #[memoize]
     fn traity(loader: Tracked<dyn Loader + '_>, path: &Path) -> Vec<u8> {
@@ -172,6 +177,7 @@ impl Loader for StaticLoader {
 
 /// Test memoized methods.
 #[test]
+#[serial]
 fn test_memoized_methods() {
     #[derive(Hash)]
     struct Taker(String);
@@ -197,6 +203,7 @@ fn test_memoized_methods() {
 
 /// Test different kinds of arguments.
 #[test]
+#[serial]
 fn test_kinds() {
     #[memoize]
     fn selfie(tester: Tracky) -> String {
@@ -277,6 +284,7 @@ impl Empty {}
 
 /// Test tracking a type with a lifetime.
 #[test]
+#[serial]
 fn test_lifetime() {
     #[comemo::memoize]
     fn contains_hello(lifeful: Tracked<Lifeful>) -> bool {
@@ -304,6 +312,7 @@ impl<'a> Lifeful<'a> {
 
 /// Test tracking a type with a chain of tracked values.
 #[test]
+#[serial]
 fn test_chain() {
     #[comemo::memoize]
     fn process(chain: Tracked<Chain>, value: u32) -> bool {
@@ -329,6 +338,7 @@ fn test_chain() {
 
 /// Test that `Tracked<T>` is covariant over `T`.
 #[test]
+#[serial]
 #[allow(unused, clippy::needless_lifetimes)]
 fn test_variance() {
     fn foo<'a>(_: Tracked<'a, Chain<'a>>) {}
@@ -366,6 +376,7 @@ impl<'a> Chain<'a> {
 
 /// Test mutable tracking.
 #[test]
+#[serial]
 #[rustfmt::skip]
 fn test_mutable() {
     #[comemo::memoize]
@@ -414,6 +425,7 @@ struct Heavy(String);
 
 /// Test a tracked method that is impure.
 #[test]
+#[serial]
 #[cfg(debug_assertions)]
 #[should_panic(
     expected = "comemo: found conflicting constraints. is this tracked function pure?"

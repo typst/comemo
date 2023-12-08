@@ -207,6 +207,7 @@ struct Call<T> {
 /// Defines a constraint for a tracked type.
 pub struct Constraint<T>(RwLock<Inner<T>>);
 
+#[derive(Clone)]
 struct Inner<T> {
     /// The list of calls.
     ///
@@ -221,15 +222,6 @@ struct Inner<T> {
 impl<T: Clone> Clone for Constraint<T> {
     fn clone(&self) -> Self {
         Self(RwLock::new(self.0.read().unwrap().clone()))
-    }
-}
-
-impl<T: Clone> Clone for Inner<T> {
-    fn clone(&self) -> Self {
-        Self {
-            calls: self.calls.clone(),
-            immutable: self.immutable.clone(),
-        }
     }
 }
 
@@ -418,7 +410,7 @@ impl<T: Clone> Clone for ImmutableConstraint<T> {
 
 impl<T> Default for ImmutableConstraint<T> {
     fn default() -> Self {
-        Self(RwLock::new(HashMap::with_hasher(Default::default())))
+        Self(RwLock::new(HashMap::default()))
     }
 }
 
