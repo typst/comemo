@@ -126,7 +126,7 @@ fn process(function: &Function) -> Result<TokenStream> {
 
     wrapped.block = parse_quote! { {
         static __CACHE: ::comemo::internal::Lazy<
-            ::std::sync::RwLock<
+            ::comemo::internal::RwLock<
                 ::comemo::internal::Cache<
                     <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
                     #output,
@@ -136,12 +136,12 @@ fn process(function: &Function) -> Result<TokenStream> {
             ::comemo::internal::Lazy::new(
                 || {
                     ::comemo::internal::register_cache(evict);
-                    ::std::sync::RwLock::new(::comemo::internal::Cache::new())
+                    ::comemo::internal::RwLock::new(::comemo::internal::Cache::new())
                 }
             );
 
         fn evict(max_age: usize) {
-            __CACHE.write().unwrap().evict(max_age);
+            __CACHE.write().evict(max_age);
         }
 
         #(#bounds;)*

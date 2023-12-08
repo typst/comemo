@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, RwLock};
 
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
+use parking_lot::{Mutex, RwLock};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::input::Input;
@@ -18,7 +18,7 @@ static ACCELERATOR: Lazy<Mutex<HashMap<(usize, u128), u128>>> =
 
 /// Register a cache in the global list.
 pub fn register_cache(fun: fn(usize)) {
-    CACHES.write().unwrap().push(fun);
+    CACHES.write().push(fun);
 }
 
 #[cfg(feature = "last_was_hit")]
@@ -52,7 +52,7 @@ where
     };
 
     // Check if there is a cached output.
-    let mut borrow = cache.write().unwrap();
+    let mut borrow = cache.write();
     if let Some((constrained, value)) = borrow.lookup::<In>(key, &input) {
         // Replay the mutations.
         input.replay(constrained);
@@ -77,7 +77,7 @@ where
     outer.join(constraint);
 
     // Insert the result into the cache.
-    borrow = cache.write().unwrap();
+    borrow = cache.write();
     borrow.insert::<In>(key, constraint.take(), output.clone());
     #[cfg(feature = "last_was_hit")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
@@ -106,8 +106,8 @@ pub fn id() -> usize {
 /// Comemo's cache is thread-local, meaning that this only evicts this thread's
 /// cache.
 pub fn evict(max_age: usize) {
-    CACHES.read().unwrap().iter().for_each(|fun| fun(max_age));
-    ACCELERATOR.lock().unwrap().clear();
+    CACHES.read().iter().for_each(|fun| fun(max_age));
+    ACCELERATOR.lock().clear();
 }
 
 /// The global cache.
@@ -221,7 +221,7 @@ struct Inner<T> {
 
 impl<T: Clone> Clone for Constraint<T> {
     fn clone(&self) -> Self {
-        Self(RwLock::new(self.0.read().unwrap().clone()))
+        Self(RwLock::new(self.0.read().clone()))
     }
 }
 
@@ -264,7 +264,7 @@ impl<T: Hash + PartialEq + Clone> Constraint<T> {
     pub fn push(&self, args: T, ret: u128, mutable: bool) {
         let args_hash = hash(&args);
         let both = hash(&(args_hash, ret));
-        self.0.write().unwrap().push_inner(Cow::Owned(Call {
+        self.0.write().push_inner(Cow::Owned(Call {
             args,
             args_hash,
             ret,
@@ -279,12 +279,7 @@ impl<T: Hash + PartialEq + Clone> Constraint<T> {
     where
         F: FnMut(&T) -> u128,
     {
-        self.0
-            .read()
-            .unwrap()
-            .calls
-            .iter()
-            .all(|entry| f(&entry.args) == entry.ret)
+        self.0.read().calls.iter().all(|entry| f(&entry.args) == entry.ret)
     }
 
     /// Whether the method satisfies as all input-output pairs.
@@ -293,8 +288,8 @@ impl<T: Hash + PartialEq + Clone> Constraint<T> {
     where
         F: FnMut(&T) -> u128,
     {
-        let inner = self.0.read().unwrap();
-        let mut map = ACCELERATOR.lock().unwrap();
+        let inner = self.0.read();
+        let mut map = ACCELERATOR.lock();
         inner.calls.iter().all(|entry| {
             *map.entry((id, entry.both)).or_insert_with(|| f(&entry.args)) == entry.ret
         })
@@ -308,7 +303,6 @@ impl<T: Hash + PartialEq + Clone> Constraint<T> {
     {
         self.0
             .read()
-            .unwrap()
             .calls
             .iter()
             .filter(|call| call.mutable)
@@ -350,7 +344,7 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
     /// Enter a constraint for a call to an immutable function.
     #[inline]
     fn push_inner(&self, call: Cow<Call<T>>) {
-        let mut calls = self.0.write().unwrap();
+        let mut calls = self.0.write();
         debug_assert!(!call.mutable);
 
         if let Some(_prev) = calls.get(&call.args_hash) {
@@ -369,11 +363,7 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
     where
         F: FnMut(&T) -> u128,
     {
-        self.0
-            .read()
-            .unwrap()
-            .values()
-            .all(|entry| f(&entry.args) == entry.ret)
+        self.0.read().values().all(|entry| f(&entry.args) == entry.ret)
     }
 
     /// Whether the method satisfies as all input-output pairs.
@@ -382,8 +372,8 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
     where
         F: FnMut(&T) -> u128,
     {
-        let calls = self.0.read().unwrap();
-        let mut map = ACCELERATOR.lock().unwrap();
+        let calls = self.0.read();
+        let mut map = ACCELERATOR.lock();
         calls.values().all(|entry| {
             *map.entry((id, entry.both)).or_insert_with(|| f(&entry.args)) == entry.ret
         })
@@ -396,7 +386,7 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
         F: FnMut(&T),
     {
         #[cfg(debug_assertions)]
-        for entry in self.0.read().unwrap().values() {
+        for entry in self.0.read().values() {
             assert!(!entry.mutable);
         }
     }
@@ -404,7 +394,7 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
 
 impl<T: Clone> Clone for ImmutableConstraint<T> {
     fn clone(&self) -> Self {
-        Self(RwLock::new(self.0.read().unwrap().clone()))
+        Self(RwLock::new(self.0.read().clone()))
     }
 }
 
@@ -440,29 +430,29 @@ impl<T: Join> Join<T> for Option<&T> {
 impl<T: Hash + Clone + PartialEq> Join for Constraint<T> {
     #[inline]
     fn join(&self, inner: &Self) {
-        let mut this = self.0.write().unwrap();
-        for call in inner.0.read().unwrap().calls.iter() {
+        let mut this = self.0.write();
+        for call in inner.0.read().calls.iter() {
             this.push_inner(Cow::Borrowed(call));
         }
     }
 
     #[inline]
     fn take(&self) -> Self {
-        Self(RwLock::new(std::mem::take(&mut *self.0.write().unwrap())))
+        Self(RwLock::new(std::mem::take(&mut *self.0.write())))
     }
 }
 
 impl<T: Hash + Clone + PartialEq> Join for ImmutableConstraint<T> {
     #[inline]
     fn join(&self, inner: &Self) {
-        for call in inner.0.read().unwrap().values() {
+        for call in inner.0.read().values() {
             self.push_inner(Cow::Borrowed(call));
         }
     }
 
     #[inline]
     fn take(&self) -> Self {
-        Self(RwLock::new(std::mem::take(&mut *self.0.write().unwrap())))
+        Self(RwLock::new(std::mem::take(&mut *self.0.write())))
     }
 }
 
