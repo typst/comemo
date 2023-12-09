@@ -151,7 +151,7 @@ where
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
     pub(crate) constraint: Option<&'a C>,
-    /// The ID of the tracked value.
+    /// A unique ID for validation acceleration.
     pub(crate) id: usize,
 }
 
@@ -180,6 +180,8 @@ where
     }
 }
 
+impl<'a, T> Copy for Tracked<'a, T> where T: Track + ?Sized {}
+
 impl<'a, T> Clone for Tracked<'a, T>
 where
     T: Track + ?Sized,
@@ -189,8 +191,6 @@ where
         *self
     }
 }
-
-impl<'a, T> Copy for Tracked<'a, T> where T: Track + ?Sized {}
 
 /// Tracks accesses and mutations to a value.
 ///
