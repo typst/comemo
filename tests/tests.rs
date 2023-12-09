@@ -76,12 +76,12 @@ fn test_basic() {
 #[serial]
 fn test_calc() {
     #[memoize]
-    fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
+    fn evaluate(script: &str, files: &Tracked<Files>) -> i32 {
         script
             .split('+')
             .map(str::trim)
             .map(|part| match part.strip_prefix("eval ") {
-                Some(path) => evaluate(&files.read(path), files),
+                Some(path) => evaluate(&files.read(path), &files),
                 None => part.parse::<i32>().unwrap(),
             })
             .sum()
@@ -91,15 +91,15 @@ fn test_calc() {
     files.write("alpha.calc", "2 + eval beta.calc");
     files.write("beta.calc", "2 + 3");
     files.write("gamma.calc", "8 + 3");
-    test!(miss: evaluate("eval alpha.calc", files.track()), 7);
-    test!(miss: evaluate("eval beta.calc", files.track()), 5);
+    test!(miss: evaluate("eval alpha.calc", &files.track()), 7);
+    test!(miss: evaluate("eval beta.calc", &files.track()), 5);
     files.write("gamma.calc", "42");
-    test!(hit: evaluate("eval alpha.calc", files.track()), 7);
+    test!(hit: evaluate("eval alpha.calc", &files.track()), 7);
     files.write("beta.calc", "4 + eval gamma.calc");
-    test!(miss: evaluate("eval beta.calc", files.track()), 46);
-    test!(miss: evaluate("eval alpha.calc", files.track()), 48);
+    test!(miss: evaluate("eval beta.calc", &files.track()), 46);
+    test!(miss: evaluate("eval alpha.calc", &files.track()), 48);
     files.write("gamma.calc", "80");
-    test!(miss: evaluate("eval alpha.calc", files.track()), 86);
+    test!(miss: evaluate("eval alpha.calc", &files.track()), 86);
 }
 
 struct Files(HashMap<PathBuf, String>);
@@ -222,15 +222,15 @@ fn test_kinds() {
     let mut tester = Tester { data: "Hi".to_string() };
 
     let tracky = tester.track();
-    test!(miss: selfie(tracky), "Hi");
-    test!(miss: unconditional(tracky), "Short");
-    test!(hit: unconditional(tracky), "Short");
+    test!(miss: selfie(tracky.clone()), "Hi");
+    test!(miss: unconditional(tracky.clone()), "Short");
+    test!(hit: unconditional(tracky.clone()), "Short");
     test!(hit: selfie(tracky), "Hi");
 
     tester.data.push('!');
 
     let tracky = tester.track();
-    test!(miss: selfie(tracky), "Hi!");
+    test!(miss: selfie(tracky.clone()), "Hi!");
     test!(miss: unconditional(tracky), "Short");
 
     tester.data.push_str(" Let's go.");
@@ -370,7 +370,8 @@ impl<'a> Chain<'a> {
 #[track]
 impl<'a> Chain<'a> {
     fn contains(&self, value: u32) -> bool {
-        self.value == value || self.outer.map_or(false, |outer| outer.contains(value))
+        self.value == value
+            || self.outer.as_ref().map_or(false, |outer| outer.contains(value))
     }
 }
 

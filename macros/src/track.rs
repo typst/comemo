@@ -219,9 +219,9 @@ fn create(
     let validate_with_id = if !methods.is_empty() {
         quote! {
             let mut this = #maybe_cloned;
-            constraint.validate_with_id(
+            constraint.validate_with_accelerator(
                 |call| match &call.0 { #(#validations,)* },
-                id,
+                accelerator,
             )
         }
     } else {
@@ -262,7 +262,7 @@ fn create(
             }
 
             #[inline]
-            fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool {
+            fn validate_with_accelerator(&self, constraint: &Self::Constraint, accelerator: &::comemo::internal::Accelerator) -> bool {
                 #validate_with_id
             }
 
@@ -378,7 +378,7 @@ fn create_wrapper(method: &Method, tracked_mut: bool) -> TokenStream {
     let args = &method.args;
     let mutable = method.mutable;
     let to_parts = if !tracked_mut {
-        quote! { to_parts_ref(self.0) }
+        quote! { to_parts_ref(&self.0) }
     } else if !mutable {
         quote! { to_parts_mut_ref(&self.0) }
     } else {

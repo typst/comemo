@@ -1,7 +1,8 @@
 use std::fmt::{self, Debug, Formatter};
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
-use crate::cache::{id, Join};
+use crate::cache::{Accelerator, Join};
 
 /// A trackable type.
 ///
@@ -12,7 +13,11 @@ pub trait Track: Validate + Surfaces {
     /// Start tracking all accesses to a value.
     #[inline]
     fn track(&self) -> Tracked<Self> {
-        Tracked { value: self, constraint: None, id: id() }
+        Tracked {
+            value: self,
+            constraint: None,
+            accelerator: Arc::new(Accelerator::default()),
+        }
     }
 
     /// Start tracking all accesses and mutations to a value.
@@ -27,7 +32,7 @@ pub trait Track: Validate + Surfaces {
         Tracked {
             value: self,
             constraint: Some(constraint),
-            id: id(),
+            accelerator: Arc::new(Accelerator::default()),
         }
     }
 
@@ -66,7 +71,11 @@ pub trait Validate {
     /// equal constraints against the same value. If given the same `id` twice,
     /// `self` must also be identical, unless [`evict`](crate::evict) has been
     /// called in between.
-    fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool;
+    fn validate_with_accelerator(
+        &self,
+        constraint: &Self::Constraint,
+        accelerator: &Accelerator,
+    ) -> bool;
 
     /// Replay recorded mutations to the value.
     fn replay(&mut self, constraint: &Self::Constraint);
@@ -151,8 +160,8 @@ where
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
     pub(crate) constraint: Option<&'a C>,
-    /// A unique ID for validation acceleration.
-    pub(crate) id: usize,
+    /// A reference to the local accelerator.
+    pub(crate) accelerator: Arc<Accelerator>,
 }
 
 // The type `Tracked<T>` automatically dereferences to T's generated surface
@@ -180,15 +189,17 @@ where
     }
 }
 
-impl<'a, T> Copy for Tracked<'a, T> where T: Track + ?Sized {}
-
 impl<'a, T> Clone for Tracked<'a, T>
 where
     T: Track + ?Sized,
 {
     #[inline]
     fn clone(&self) -> Self {
-        *self
+        Self {
+            value: self.value,
+            constraint: self.constraint,
+            accelerator: Arc::clone(&self.accelerator),
+        }
     }
 }
 
@@ -227,7 +238,7 @@ where
         Tracked {
             value: this.value,
             constraint: this.constraint,
-            id: id(),
+            accelerator: Arc::new(Accelerator::default()),
         }
     }
 
@@ -240,7 +251,7 @@ where
         Tracked {
             value: this.value,
             constraint: this.constraint,
-            id: id(),
+            accelerator: Arc::new(Accelerator::default()),
         }
     }
 
@@ -288,7 +299,7 @@ where
 
 /// Destructure a `Tracked<_>` into its parts.
 #[inline]
-pub fn to_parts_ref<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
+pub fn to_parts_ref<'a, T>(tracked: &Tracked<'a, T>) -> (&'a T, Option<&'a T::Constraint>)
 where
     T: Track + ?Sized,
 {

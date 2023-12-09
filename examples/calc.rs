@@ -16,33 +16,33 @@ fn main() {
     files.write("gamma.calc", "8 + 3");
 
     // [Miss] The cache is empty.
-    assert_eq!(evaluate("eval alpha.calc", files.track()), 7);
+    assert_eq!(evaluate("eval alpha.calc", &files.track()), 7);
 
     // [Miss] This is not a top-level hit because this exact string was never
     // passed to `evaluate`, but this does not compute "2 + 3" again.
-    assert_eq!(evaluate("eval beta.calc", files.track()), 5);
+    assert_eq!(evaluate("eval beta.calc", &files.track()), 5);
 
     // Modify the gamma file.
     files.write("gamma.calc", "42");
 
     // [Hit] This is a hit because `gamma.calc` isn't referenced by `alpha.calc`.
-    assert_eq!(evaluate("eval alpha.calc", files.track()), 7);
+    assert_eq!(evaluate("eval alpha.calc", &files.track()), 7);
 
     // Modify the beta file.
     files.write("beta.calc", "4 + eval gamma.calc");
 
     // [Miss] This is a miss because `beta.calc` changed.
-    assert_eq!(evaluate("eval alpha.calc", files.track()), 48);
+    assert_eq!(evaluate("eval alpha.calc", &files.track()), 48);
 }
 
 /// Evaluate a `.calc` script.
 #[memoize]
-fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
+fn evaluate(script: &str, files: &Tracked<Files>) -> i32 {
     script
         .split('+')
         .map(str::trim)
         .map(|part| match part.strip_prefix("eval ") {
-            Some(path) => evaluate(&files.read(path), files),
+            Some(path) => evaluate(&files.read(path), &files),
             None => part.parse::<i32>().unwrap(),
         })
         .sum()

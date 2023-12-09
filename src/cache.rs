@@ -1,20 +1,16 @@
 use std::borrow::Cow;
 use std::hash::Hash;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use hashbrown::HashMap;
-use once_cell::sync::Lazy;
 use parking_lot::{Mutex, RwLock};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::input::Input;
 
+pub type Accelerator = Mutex<HashMap<u128, u128>>;
+
 /// The global list of caches.
 static CACHES: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
-
-/// The global accelerator.
-static ACCELERATOR: Lazy<Mutex<HashMap<(usize, u128), u128>>> =
-    Lazy::new(|| Mutex::new(HashMap::default()));
 
 /// Register a cache in the global list.
 pub fn register_cache(fun: fn(usize)) {
@@ -26,11 +22,6 @@ thread_local! {
     /// Whether the last call was a hit.
     static LAST_WAS_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
-
-/// The global ID counter for tracked values. Each tracked value gets a
-/// unqiue ID based on which its validations are cached in the accelerator.
-/// IDs may only be reused upon eviction of the accelerator.
-static ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
@@ -91,11 +82,6 @@ pub fn last_was_hit() -> bool {
     LAST_WAS_HIT.with(|cell| cell.get())
 }
 
-/// Get the next ID.
-pub fn id() -> usize {
-    ID.fetch_add(1, Ordering::SeqCst)
-}
-
 /// Evict the cache.
 ///
 /// This removes all memoized results from the cache whose age is larger than or
@@ -107,7 +93,6 @@ pub fn id() -> usize {
 /// cache.
 pub fn evict(max_age: usize) {
     CACHES.read().iter().for_each(|fun| fun(max_age));
-    ACCELERATOR.lock().clear();
 }
 
 /// The global cache.
@@ -284,14 +269,18 @@ impl<T: Hash + PartialEq + Clone> Constraint<T> {
 
     /// Whether the method satisfies as all input-output pairs.
     #[inline]
-    pub fn validate_with_id<F>(&self, mut f: F, id: usize) -> bool
+    pub fn validate_with_accelerator<F>(
+        &self,
+        mut f: F,
+        accelerator: &Accelerator,
+    ) -> bool
     where
         F: FnMut(&T) -> u128,
     {
         let inner = self.0.read();
-        let mut map = ACCELERATOR.lock();
+        let mut map = accelerator.lock();
         inner.calls.iter().all(|entry| {
-            *map.entry((id, entry.both)).or_insert_with(|| f(&entry.args)) == entry.ret
+            *map.entry(entry.both).or_insert_with(|| f(&entry.args)) == entry.ret
         })
     }
 
@@ -368,14 +357,18 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
 
     /// Whether the method satisfies as all input-output pairs.
     #[inline]
-    pub fn validate_with_id<F>(&self, mut f: F, id: usize) -> bool
+    pub fn validate_with_accelerator<F>(
+        &self,
+        mut f: F,
+        accelerator: &Accelerator,
+    ) -> bool
     where
         F: FnMut(&T) -> u128,
     {
         let calls = self.0.read();
-        let mut map = ACCELERATOR.lock();
+        let mut map = accelerator.lock();
         calls.values().all(|entry| {
-            *map.entry((id, entry.both)).or_insert_with(|| f(&entry.args)) == entry.ret
+            *map.entry(entry.both).or_insert_with(|| f(&entry.args)) == entry.ret
         })
     }
 

@@ -84,7 +84,7 @@ where
 
     #[inline]
     fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate_with_id(constraint, self.id)
+        self.value.validate_with_accelerator(constraint, &self.accelerator)
     }
 
     #[inline]
@@ -101,13 +101,85 @@ where
         let tracked = Tracked {
             value: self.value,
             constraint: Some(constraint),
-            id: self.id,
+            accelerator: self.accelerator,
+        };
+        (tracked, self.constraint)
+    }
+}
+
+impl<'a: 'b, 'b, T> Input for &'b Tracked<'a, T>
+where
+    T: Track + ?Sized,
+{
+    // Forward constraint from `Trackable` implementation.
+    type Constraint = <T as Validate>::Constraint;
+    type Tracked<'r> = Tracked<'r, T> where Self: 'r;
+    type Outer = Option<&'a Self::Constraint>;
+
+    #[inline]
+    fn key<H: Hasher>(&self, _: &mut H) {}
+
+    #[inline]
+    fn validate(&self, constraint: &Self::Constraint) -> bool {
+        self.value.validate_with_accelerator(constraint, &self.accelerator)
+    }
+
+    #[inline]
+    fn replay(&mut self, _: &Self::Constraint) {}
+
+    #[inline]
+    fn retrack<'r>(
+        self,
+        constraint: &'r Self::Constraint,
+    ) -> (Self::Tracked<'r>, Self::Outer)
+    where
+        Self: 'r,
+    {
+        let tracked = Tracked {
+            value: self.value,
+            constraint: Some(constraint),
+            accelerator: self.accelerator.clone(),
         };
         (tracked, self.constraint)
     }
 }
 
 impl<'a, T> Input for TrackedMut<'a, T>
+where
+    T: Track + ?Sized,
+{
+    // Forward constraint from `Trackable` implementation.
+    type Constraint = T::Constraint;
+    type Tracked<'r> = TrackedMut<'r, T> where Self: 'r;
+    type Outer = Option<&'a Self::Constraint>;
+
+    #[inline]
+    fn key<H: Hasher>(&self, _: &mut H) {}
+
+    #[inline]
+    fn validate(&self, constraint: &Self::Constraint) -> bool {
+        self.value.validate(constraint)
+    }
+
+    #[inline]
+    fn replay(&mut self, constraint: &Self::Constraint) {
+        self.value.replay(constraint);
+    }
+
+    #[inline]
+    fn retrack<'r>(
+        self,
+        constraint: &'r Self::Constraint,
+    ) -> (Self::Tracked<'r>, Self::Outer)
+    where
+        Self: 'r,
+    {
+        let tracked = TrackedMut { value: self.value, constraint: Some(constraint) };
+        (tracked, self.constraint)
+    }
+}
+
+impl<'a: 'b, 'b, T> Input for &'b mut TrackedMut<'a, T>
 where
     T: Track + ?Sized,
 {
