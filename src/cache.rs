@@ -19,6 +19,7 @@ static CAPACITY: AtomicUsize = AtomicUsize::new(0);
 
 /// The current ID of the accelerator.
 static ID: AtomicUsize = AtomicUsize::new(0);
+/// The current offset of the accelerator IDs.
 static OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 /// Register a cache in the global list.
@@ -26,11 +27,15 @@ pub fn register_cache(fun: fn(usize)) {
     CACHES.write().push(fun);
 }
 
+/// Get the current offset.
 fn offset() -> usize {
     OFFSET.load(Ordering::Acquire)
 }
 
 /// Generate a new accelerator.
+/// 
+/// Will allocate a new accelerator if the ID is larger than the current
+/// capacity.
 pub fn id() -> usize {
     #[cold]
     fn allocate_accelerator(len: usize) {
@@ -41,8 +46,8 @@ pub fn id() -> usize {
         }
 
         // We allocate exponentially to avoid too many reallocations.
-        accelerators.resize_with(len * 2, || Mutex::new(HashMap::new()));
-        CAPACITY.store(len * 2, Ordering::Release);
+        accelerators.resize_with(len, || Mutex::new(HashMap::new()));
+        CAPACITY.store(len, Ordering::Release);
     }
 
     // Get the next ID.
