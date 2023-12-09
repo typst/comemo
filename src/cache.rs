@@ -3,7 +3,9 @@ use std::sync::atomic::Ordering;
 use std::{borrow::Cow, sync::atomic::AtomicUsize};
 
 use hashbrown::HashMap;
-use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
+use parking_lot::{
+    MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard,
+};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::input::Input;
@@ -15,12 +17,11 @@ static CACHES: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
 
 /// The global list of currently alive accelerators.
 static ACCELERATORS: RwLock<Vec<Accelerator>> = RwLock::new(Vec::new());
-
-static OFFSET: AtomicUsize = AtomicUsize::new(0);
 static CAPACITY: AtomicUsize = AtomicUsize::new(0);
 
 /// The current ID of the accelerator.
 static ID: AtomicUsize = AtomicUsize::new(0);
+static OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 /// Register a cache in the global list.
 pub fn register_cache(fun: fn(usize)) {
@@ -34,27 +35,27 @@ fn offset() -> usize {
 /// Generate a new accelerator.
 pub fn id() -> usize {
     #[cold]
-    fn allocate_accelerator(min_len: usize) {
-        // Allocate a new accelerator.
-        let mut list = ACCELERATORS.write();
-
-        let len = (ID.load(Ordering::Acquire) - offset()).max(min_len);
-
+    fn allocate_accelerator(
+        len: usize,
+    ) {
+        let mut accelerators = ACCELERATORS.write();
         // If it was grown by another thread, we can just return.
-        if list.len() >= len {
+        if accelerators.len() >= len {
             return;
         }
 
-        list.resize_with(len, || Mutex::new(HashMap::new()));
-        CAPACITY.store(len, Ordering::Release);
+        // We allocate exponentially to avoid too many reallocations.
+        accelerators.resize_with(len * 2, || Mutex::new(HashMap::new()));
+        CAPACITY.store(len * 2, Ordering::Release);
     }
 
     // Get the next ID.
     let id = ID.fetch_add(1, Ordering::AcqRel);
 
     // Make sure that the accelerator list is long enough.
-    if CAPACITY.load(Ordering::Acquire) <= id - offset() {
-        allocate_accelerator(id - offset() + 1);
+    let i = id - offset();
+    if CAPACITY.load(Ordering::Acquire) <= i {
+        allocate_accelerator(i + 1);
     }
 
     id
@@ -62,21 +63,20 @@ pub fn id() -> usize {
 
 /// Get an accelerator by ID.
 fn accelerator(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>> {
+    // We always lock the accelerators, as we need to make sure that the
+    // accelerator is not removed while we are reading it.
+    let accelerators = ACCELERATORS.read();
+
     let offset = offset();
     if id < offset {
         return None;
     }
 
-    // We always lock the accelerators, as we need to make sure that the
-    // accelerator is not removed while we are reading it.
-    let accelerators = ACCELERATORS.read();
-
     let i = id - offset;
-    if i >= accelerators.len() {
-        return None;
-    }
-
-    Some(RwLockReadGuard::map(accelerators, move |accelerators| &accelerators[i]))
+    Some(RwLockReadGuard::map(
+        accelerators,
+        move |accelerators| &accelerators[i],
+    ))
 }
 
 #[cfg(feature = "last_was_hit")]
