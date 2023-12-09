@@ -1,5 +1,6 @@
-use std::borrow::Cow;
 use std::hash::Hash;
+use std::sync::atomic::Ordering;
+use std::{borrow::Cow, sync::atomic::AtomicUsize};
 
 use hashbrown::HashMap;
 use parking_lot::{Mutex, RwLock};
@@ -43,7 +44,7 @@ where
     };
 
     // Check if there is a cached output.
-    let mut borrow = cache.write();
+    let borrow = cache.read();
     if let Some((constrained, value)) = borrow.lookup::<In>(key, &input) {
         // Replay the mutations.
         input.replay(constrained);
@@ -68,7 +69,7 @@ where
     outer.join(constraint);
 
     // Insert the result into the cache.
-    borrow = cache.write();
+    let mut borrow = cache.write();
     borrow.insert::<In>(key, constraint.take(), output.clone());
     #[cfg(feature = "last_was_hit")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
@@ -116,22 +117,22 @@ impl<C, Out: 'static> Cache<C, Out> {
     /// Evict all entries whose age is larger than or equal to `max_age`.
     pub fn evict(&mut self, max_age: usize) {
         self.entries.retain(|_, entries| {
-            entries.retain_mut(|entry| {
-                entry.age += 1;
-                entry.age <= max_age
+            entries.retain(|entry| {
+                let age = entry.age.fetch_add(1, Ordering::Acquire);
+                (age + 1) <= max_age
             });
             !entries.is_empty()
         });
     }
 
     /// Look for a matching entry in the cache.
-    fn lookup<In>(&mut self, key: u128, input: &In) -> Option<(&In::Constraint, &Out)>
+    fn lookup<In>(&self, key: u128, input: &In) -> Option<(&In::Constraint, &Out)>
     where
         In: Input<Constraint = C>,
     {
         self.entries
-            .get_mut(&key)?
-            .iter_mut()
+            .get(&key)?
+            .iter()
             .rev()
             .find_map(|entry| entry.lookup::<In>(input))
     }
@@ -155,7 +156,7 @@ struct CacheEntry<C, Out> {
     /// The memoized function's output.
     output: Out,
     /// How many evictions have passed since the entry has been last used.
-    age: usize,
+    age: AtomicUsize,
 }
 
 impl<C, Out: 'static> CacheEntry<C, Out> {
@@ -164,16 +165,16 @@ impl<C, Out: 'static> CacheEntry<C, Out> {
     where
         In: Input<Constraint = C>,
     {
-        Self { constraint, output, age: 0 }
+        Self { constraint, output, age: AtomicUsize::new(0) }
     }
 
     /// Return the entry's output if it is valid for the given input.
-    fn lookup<In>(&mut self, input: &In) -> Option<(&In::Constraint, &Out)>
+    fn lookup<In>(&self, input: &In) -> Option<(&In::Constraint, &Out)>
     where
         In: Input<Constraint = C>,
     {
         input.validate(&self.constraint).then(|| {
-            self.age = 0;
+            self.age.store(0, Ordering::Release);
             (&self.constraint, &self.output)
         })
     }
