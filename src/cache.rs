@@ -3,9 +3,7 @@ use std::sync::atomic::Ordering;
 use std::{borrow::Cow, sync::atomic::AtomicUsize};
 
 use hashbrown::HashMap;
-use parking_lot::{
-    MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard,
-};
+use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::input::Input;
@@ -35,9 +33,7 @@ fn offset() -> usize {
 /// Generate a new accelerator.
 pub fn id() -> usize {
     #[cold]
-    fn allocate_accelerator(
-        len: usize,
-    ) {
+    fn allocate_accelerator(len: usize) {
         let mut accelerators = ACCELERATORS.write();
         // If it was grown by another thread, we can just return.
         if accelerators.len() >= len {
@@ -73,10 +69,7 @@ fn accelerator(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>>
     }
 
     let i = id - offset;
-    Some(RwLockReadGuard::map(
-        accelerators,
-        move |accelerators| &accelerators[i],
-    ))
+    Some(RwLockReadGuard::map(accelerators, move |accelerators| &accelerators[i]))
 }
 
 #[cfg(feature = "last_was_hit")]
