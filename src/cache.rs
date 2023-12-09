@@ -3,9 +3,7 @@ use std::sync::atomic::Ordering;
 use std::{borrow::Cow, sync::atomic::AtomicUsize};
 
 use hashbrown::HashMap;
-use parking_lot::{
-    MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard,
-};
+use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::input::Input;
@@ -48,14 +46,14 @@ pub fn id() -> usize {
         }
 
         list.resize_with(len, || Mutex::new(HashMap::new()));
-        CAPACITY.store(len, Ordering::SeqCst);
+        CAPACITY.store(len, Ordering::Release);
     }
 
     // Get the next ID.
-    let id = ID.fetch_add(1, Ordering::SeqCst);
+    let id = ID.fetch_add(1, Ordering::AcqRel);
 
     // Make sure that the accelerator list is long enough.
-    if CAPACITY.load(Ordering::SeqCst) <= id - offset() {
+    if CAPACITY.load(Ordering::Acquire) <= id - offset() {
         allocate_accelerator(id - offset() + 1);
     }
 
@@ -64,26 +62,21 @@ pub fn id() -> usize {
 
 /// Get an accelerator by ID.
 fn accelerator(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>> {
-
-    // We always lock the accelerators, as we need to make sure that the
-    // accelerator is not removed while we are reading it.
-    let accelerators = ACCELERATORS.read();
-
-    // because
     let offset = offset();
     if id < offset {
         return None;
     }
 
-    let i: usize = id - offset;
+    // We always lock the accelerators, as we need to make sure that the
+    // accelerator is not removed while we are reading it.
+    let accelerators = ACCELERATORS.read();
+
+    let i = id - offset;
     if i >= accelerators.len() {
         return None;
     }
 
-    Some(RwLockReadGuard::map(
-        accelerators,
-        move |accelerators| &accelerators[i],
-    ))
+    Some(RwLockReadGuard::map(accelerators, move |accelerators| &accelerators[i]))
 }
 
 #[cfg(feature = "last_was_hit")]
@@ -167,10 +160,10 @@ pub fn evict(max_age: usize) {
     let mut accelerators = ACCELERATORS.write();
 
     // Force the ID to be loaded.
-    let id = ID.load(Ordering::SeqCst);
+    let id = ID.load(Ordering::Acquire);
 
     // Update the offset.
-    OFFSET.store(id, Ordering::SeqCst);
+    OFFSET.store(id, Ordering::Release);
 
     // Clear all accelerators while keeping the memory allocated.
     accelerators.iter_mut().for_each(|accelerator| {
