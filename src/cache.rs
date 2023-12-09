@@ -25,9 +25,7 @@ pub fn register_cache(fun: fn(usize)) {
 }
 
 /// Generate a new accelerator.
-/// 
-/// Will allocate a new accelerator if the ID is larger than the current
-/// capacity.
+/// Will allocate a new accelerator if the ID is larger than the current capacity.
 pub fn id() -> usize {
     // Get the next ID.
     ID.fetch_add(1, Ordering::AcqRel)
