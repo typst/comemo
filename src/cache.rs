@@ -14,22 +14,14 @@ pub type Accelerator = Mutex<HashMap<u128, u128>>;
 static CACHES: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
 
 /// The global list of currently alive accelerators.
-static ACCELERATORS: RwLock<Vec<Accelerator>> = RwLock::new(Vec::new());
-static CAPACITY: AtomicUsize = AtomicUsize::new(0);
+static ACCELERATORS: RwLock<(usize, Vec<Accelerator>)> = RwLock::new((0, Vec::new()));
 
 /// The current ID of the accelerator.
 static ID: AtomicUsize = AtomicUsize::new(0);
-/// The current offset of the accelerator IDs.
-static OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 /// Register a cache in the global list.
 pub fn register_cache(fun: fn(usize)) {
     CACHES.write().push(fun);
-}
-
-/// Get the current offset.
-fn offset() -> usize {
-    OFFSET.load(Ordering::Acquire)
 }
 
 /// Generate a new accelerator.
@@ -37,44 +29,40 @@ fn offset() -> usize {
 /// Will allocate a new accelerator if the ID is larger than the current
 /// capacity.
 pub fn id() -> usize {
-    #[cold]
-    fn allocate_accelerator(len: usize) {
-        let mut accelerators = ACCELERATORS.write();
-        // If it was grown by another thread, we can just return.
-        if accelerators.len() >= len {
-            return;
-        }
-
-        // We allocate exponentially to avoid too many reallocations.
-        accelerators.resize_with(len, || Mutex::new(HashMap::new()));
-        CAPACITY.store(len, Ordering::Release);
-    }
-
     // Get the next ID.
-    let id = ID.fetch_add(1, Ordering::AcqRel);
-
-    // Make sure that the accelerator list is long enough.
-    let i = id - offset();
-    if CAPACITY.load(Ordering::Acquire) <= i {
-        allocate_accelerator(i + 1);
-    }
-
-    id
+    ID.fetch_add(1, Ordering::AcqRel)
 }
 
 /// Get an accelerator by ID.
 fn accelerator(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>> {
+    #[cold]
+    fn resize_accelerators(len: usize) {
+        let mut accelerators = ACCELERATORS.write();
+
+        if len <= accelerators.1.len() {
+            return;
+        }
+
+        accelerators.1.resize_with(len, || Mutex::new(HashMap::new()));
+    }
+
     // We always lock the accelerators, as we need to make sure that the
     // accelerator is not removed while we are reading it.
-    let accelerators = ACCELERATORS.read();
+    let mut accelerators = ACCELERATORS.read();
 
-    let offset = offset();
+    let offset = accelerators.0;
     if id < offset {
         return None;
     }
 
+    if id - offset >= accelerators.1.len() {
+        drop(accelerators);
+        resize_accelerators(id - offset + 1);
+        accelerators = ACCELERATORS.read();
+    }
+
     let i = id - offset;
-    Some(RwLockReadGuard::map(accelerators, move |accelerators| &accelerators[i]))
+    Some(RwLockReadGuard::map(accelerators, move |accelerators| &accelerators.1[i]))
 }
 
 #[cfg(feature = "last_was_hit")]
@@ -161,10 +149,10 @@ pub fn evict(max_age: usize) {
     let id = ID.load(Ordering::Acquire);
 
     // Update the offset.
-    OFFSET.store(id, Ordering::Release);
+    accelerators.0 = id;
 
     // Clear all accelerators while keeping the memory allocated.
-    accelerators.iter_mut().for_each(|accelerator| {
+    accelerators.1.iter_mut().for_each(|accelerator| {
         accelerator.lock().clear();
     })
 }
