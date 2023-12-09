@@ -84,7 +84,7 @@ where
 
     #[inline]
     fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate_with_accelerator(constraint, &self.accelerator)
+        self.value.validate_with_id(constraint, self.id)
     }
 
     #[inline]
@@ -101,7 +101,7 @@ where
         let tracked = Tracked {
             value: self.value,
             constraint: Some(constraint),
-            accelerator: self.accelerator,
+            id: self.id,
         };
         (tracked, self.constraint)
     }
@@ -121,7 +121,7 @@ where
 
     #[inline]
     fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate_with_accelerator(constraint, &self.accelerator)
+        self.value.validate_with_id(constraint, self.id)
     }
 
     #[inline]
@@ -138,7 +138,7 @@ where
         let tracked = Tracked {
             value: self.value,
             constraint: Some(constraint),
-            accelerator: self.accelerator.clone(),
+            id: self.id,
         };
         (tracked, self.constraint)
     }

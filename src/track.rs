@@ -1,8 +1,7 @@
 use std::fmt::{self, Debug, Formatter};
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
 
-use crate::cache::{Accelerator, Join};
+use crate::cache::{id, Join};
 
 /// A trackable type.
 ///
@@ -13,11 +12,7 @@ pub trait Track: Validate + Surfaces {
     /// Start tracking all accesses to a value.
     #[inline]
     fn track(&self) -> Tracked<Self> {
-        Tracked {
-            value: self,
-            constraint: None,
-            accelerator: Arc::new(Accelerator::default()),
-        }
+        Tracked { value: self, constraint: None, id: id() }
     }
 
     /// Start tracking all accesses and mutations to a value.
@@ -32,7 +27,7 @@ pub trait Track: Validate + Surfaces {
         Tracked {
             value: self,
             constraint: Some(constraint),
-            accelerator: Arc::new(Accelerator::default()),
+            id: id(),
         }
     }
 
@@ -71,11 +66,7 @@ pub trait Validate {
     /// equal constraints against the same value. If given the same `id` twice,
     /// `self` must also be identical, unless [`evict`](crate::evict) has been
     /// called in between.
-    fn validate_with_accelerator(
-        &self,
-        constraint: &Self::Constraint,
-        accelerator: &Accelerator,
-    ) -> bool;
+    fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool;
 
     /// Replay recorded mutations to the value.
     fn replay(&mut self, constraint: &Self::Constraint);
@@ -160,8 +151,8 @@ where
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
     pub(crate) constraint: Option<&'a C>,
-    /// A reference to the local accelerator.
-    pub(crate) accelerator: Arc<Accelerator>,
+    /// The ID of the tracked value.
+    pub(crate) id: usize,
 }
 
 // The type `Tracked<T>` automatically dereferences to T's generated surface
@@ -195,13 +186,11 @@ where
 {
     #[inline]
     fn clone(&self) -> Self {
-        Self {
-            value: self.value,
-            constraint: self.constraint,
-            accelerator: Arc::clone(&self.accelerator),
-        }
+        *self
     }
 }
+
+impl<'a, T> Copy for Tracked<'a, T> where T: Track + ?Sized {}
 
 /// Tracks accesses and mutations to a value.
 ///
@@ -238,7 +227,7 @@ where
         Tracked {
             value: this.value,
             constraint: this.constraint,
-            accelerator: Arc::new(Accelerator::default()),
+            id: id(),
         }
     }
 
@@ -251,7 +240,7 @@ where
         Tracked {
             value: this.value,
             constraint: this.constraint,
-            accelerator: Arc::new(Accelerator::default()),
+            id: id(),
         }
     }
 

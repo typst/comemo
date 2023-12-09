@@ -1,5 +1,6 @@
 use std::hash::Hash;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::{borrow::Cow, sync::atomic::AtomicUsize};
 
 use hashbrown::HashMap;
@@ -8,14 +9,48 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::input::Input;
 
-pub type Accelerator = Mutex<HashMap<u128, u128>>;
+pub type Accelerator = Arc<Mutex<HashMap<u128, u128>>>;
 
 /// The global list of caches.
 static CACHES: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
 
+/// The global list of currently alive accelerators.
+static ACCELERATORS: RwLock<(usize, Vec<Accelerator>)> = RwLock::new((0, Vec::new()));
+
+/// The current ID of the accelerator.
+static ID: AtomicUsize = AtomicUsize::new(0);
+
 /// Register a cache in the global list.
 pub fn register_cache(fun: fn(usize)) {
     CACHES.write().push(fun);
+}
+
+/// Generate a new accelerator.
+pub fn id() -> usize {
+    ID.fetch_add(1, Ordering::Release)
+}
+
+/// Get an accelerator by ID.
+fn accelerator(id: usize) -> Option<Accelerator> {
+    // We always lock the accelerators, as we need to make sure that the
+    // accelerator is not removed while we are reading it.
+    let accelerators = ACCELERATORS.read();
+
+    // Force the ID to be loaded.
+    ID.load(Ordering::Acquire);
+
+    // because
+    let offset = accelerators.0;
+    if id < offset {
+        return None;
+    }
+
+    let i = id - offset;
+    if i >= accelerators.1.len() {
+        return None;
+    }
+
+    Some(accelerators.1[i].clone())
 }
 
 #[cfg(feature = "last_was_hit")]
@@ -94,6 +129,11 @@ pub fn last_was_hit() -> bool {
 /// cache.
 pub fn evict(max_age: usize) {
     CACHES.read().iter().for_each(|fun| fun(max_age));
+
+    // Evict all accelerators.
+    let mut accelerators = ACCELERATORS.write();
+    accelerators.0 += accelerators.1.len();
+    accelerators.1.clear();
 }
 
 /// The global cache.
@@ -270,19 +310,20 @@ impl<T: Hash + PartialEq + Clone> Constraint<T> {
 
     /// Whether the method satisfies as all input-output pairs.
     #[inline]
-    pub fn validate_with_accelerator<F>(
-        &self,
-        mut f: F,
-        accelerator: &Accelerator,
-    ) -> bool
+    pub fn validate_with_id<F>(&self, mut f: F, id: usize) -> bool
     where
         F: FnMut(&T) -> u128,
     {
+        let accelerator = accelerator(id);
         let inner = self.0.read();
-        let mut map = accelerator.lock();
-        inner.calls.iter().all(|entry| {
-            *map.entry(entry.both).or_insert_with(|| f(&entry.args)) == entry.ret
-        })
+        if let Some(accelerator) = accelerator {
+            let mut map = accelerator.lock();
+            inner.calls.iter().all(|entry| {
+                *map.entry(entry.both).or_insert_with(|| f(&entry.args)) == entry.ret
+            })
+        } else {
+            inner.calls.iter().all(|entry| f(&entry.args) == entry.ret)
+        }
     }
 
     /// Replay all input-output pairs.
@@ -358,19 +399,20 @@ impl<T: Hash + PartialEq + Clone> ImmutableConstraint<T> {
 
     /// Whether the method satisfies as all input-output pairs.
     #[inline]
-    pub fn validate_with_accelerator<F>(
-        &self,
-        mut f: F,
-        accelerator: &Accelerator,
-    ) -> bool
+    pub fn validate_with_id<F>(&self, mut f: F, id: usize) -> bool
     where
         F: FnMut(&T) -> u128,
     {
-        let calls = self.0.read();
-        let mut map = accelerator.lock();
-        calls.values().all(|entry| {
-            *map.entry(entry.both).or_insert_with(|| f(&entry.args)) == entry.ret
-        })
+        let accelerator = accelerator(id);
+        let inner = self.0.read();
+        if let Some(accelerator) = accelerator {
+            let mut map = accelerator.lock();
+            inner.values().all(|entry| {
+                *map.entry(entry.both).or_insert_with(|| f(&entry.args)) == entry.ret
+            })
+        } else {
+            inner.values().all(|entry| f(&entry.args) == entry.ret)
+        }
     }
 
     /// Replay all input-output pairs.

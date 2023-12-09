@@ -219,9 +219,9 @@ fn create(
     let validate_with_id = if !methods.is_empty() {
         quote! {
             let mut this = #maybe_cloned;
-            constraint.validate_with_accelerator(
+            constraint.validate_with_id(
                 |call| match &call.0 { #(#validations,)* },
-                accelerator,
+                id,
             )
         }
     } else {
@@ -262,7 +262,7 @@ fn create(
             }
 
             #[inline]
-            fn validate_with_accelerator(&self, constraint: &Self::Constraint, accelerator: &::comemo::internal::Accelerator) -> bool {
+            fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool {
                 #validate_with_id
             }
 
