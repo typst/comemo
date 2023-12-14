@@ -164,9 +164,9 @@ impl<T: Call> EntryMap<T> {
     #[inline]
     fn push_inner(&mut self, entry: Cow<ConstraintEntry<T>>) {
         match self.0.entry(entry.call_hash) {
-            Entry::Occupied(occupied) => {
+            Entry::Occupied(_occupied) => {
                 #[cfg(debug_assertions)]
-                check(occupied.get(), &entry);
+                check(_occupied.get(), &entry);
             }
             Entry::Vacant(vacant) => {
                 vacant.insert(entry.into_owned());
