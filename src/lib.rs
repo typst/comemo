@@ -98,13 +98,12 @@ pub mod internal {
     pub use parking_lot::RwLock;
 
     pub use crate::cache::{
-        hash, memoized, register_cache, Accelerator, Cache, Constraint,
-        ImmutableConstraint,
+        hash, memoized, register_cache, Accelerator, Cache, CacheData, Call,
+        ImmutableConstraint, MutableConstraint,
     };
 
     pub use crate::input::{assert_hashable_or_trackable, Args, Input};
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Surfaces};
-    pub use once_cell::sync::Lazy;
 
     #[cfg(feature = "last_was_hit")]
     pub use crate::cache::last_was_hit;

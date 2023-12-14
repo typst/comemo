@@ -7,7 +7,7 @@ pub fn expand(item: &syn::Item) -> Result<proc_macro2::TokenStream> {
     };
 
     // Preprocess and validate the function.
-    let function = prepare(&item)?;
+    let function = prepare(item)?;
 
     // Rewrite the function's body to memoize it.
     process(&function)
@@ -71,7 +71,7 @@ fn prepare_arg(input: &syn::FnArg) -> Result<Argument> {
                 bail!(typed.ty, "memoized functions cannot have mutable parameters")
             }
 
-            Argument::Ident(typed.ty.clone(), mutability.clone(), ident.clone())
+            Argument::Ident(typed.ty.clone(), *mutability, ident.clone())
         }
     })
 }
@@ -125,20 +125,13 @@ fn process(function: &Function) -> Result<TokenStream> {
     }
 
     wrapped.block = parse_quote! { {
-        static __CACHE: ::comemo::internal::Lazy<
-            ::comemo::internal::RwLock<
-                ::comemo::internal::Cache<
-                    <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
-                    #output,
-                >
-            >
-        > =
-            ::comemo::internal::Lazy::new(
-                || {
-                    ::comemo::internal::register_cache(evict);
-                    ::comemo::internal::RwLock::new(::comemo::internal::Cache::new())
-                }
-            );
+        static __CACHE: ::comemo::internal::Cache<
+            <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
+            #output,
+        > = ::comemo::internal::Cache::new(|| {
+            ::comemo::internal::register_cache(evict);
+            ::comemo::internal::RwLock::new(::comemo::internal::CacheData::new())
+        });
 
         fn evict(max_age: usize) {
             __CACHE.write().evict(max_age);
@@ -148,7 +141,7 @@ fn process(function: &Function) -> Result<TokenStream> {
         ::comemo::internal::memoized(
             ::comemo::internal::Args(#arg_tuple),
             &::core::default::Default::default(),
-            &*__CACHE,
+            &__CACHE,
             #closure,
         )
     } };

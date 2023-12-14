@@ -288,7 +288,7 @@ where
 
 /// Destructure a `Tracked<_>` into its parts.
 #[inline]
-pub fn to_parts_ref<'a, T>(tracked: &Tracked<'a, T>) -> (&'a T, Option<&'a T::Constraint>)
+pub fn to_parts_ref<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
 where
     T: Track + ?Sized,
 {
