@@ -5,7 +5,7 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
     // Preprocess and validate the methods.
     let mut methods = vec![];
 
-    let (ty, generics, trait_, prefix) = match item {
+    let (ty, generics, trait_) = match item {
         syn::Item::Impl(item) => {
             for param in item.generics.params.iter() {
                 match param {
@@ -24,7 +24,7 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
             }
 
             let ty = item.self_ty.as_ref().clone();
-            (ty, &item.generics, None, None)
+            (ty, &item.generics, None)
         }
         syn::Item::Trait(item) => {
             if let Some(first) = item.generics.params.first() {
@@ -36,32 +36,20 @@ pub fn expand(item: &syn::Item) -> Result<TokenStream> {
             }
 
             let name = &item.ident;
-            let ty_send_sync = parse_quote! { dyn #name + '__comemo_dynamic };
-            let ty = parse_quote! { dyn #name + Send + Sync + '__comemo_dynamic };
-
-            // Produce the necessary item for the non-Send + Sync version of the trait.
-            let prefix = create(
-                &ty,
-                Some(quote::format_ident!("__ComemoSurfaceUnsync")),
-                &item.generics,
-                Some(item.ident.clone()),
-                &methods,
-            )?;
-
-            (ty_send_sync, &item.generics, Some(item.ident.clone()), Some(prefix))
+            let ty = parse_quote! { dyn #name + '__comemo_dynamic };
+            (ty, &item.generics, Some(item.ident.clone()))
         }
         _ => bail!(item, "`track` can only be applied to impl blocks and traits"),
     };
 
     // Produce the necessary items for the type to become trackable.
     let variants = create_variants(&methods);
-    let scope = create(&ty, None, generics, trait_, &methods)?;
+    let scope = create(&ty, generics, trait_, &methods)?;
 
     Ok(quote! {
         #item
         const _: () = {
             #variants
-            #prefix
             #scope
         };
     })
@@ -232,7 +220,6 @@ fn create_variants(methods: &[Method]) -> TokenStream {
 /// Produce the necessary items for a type to become trackable.
 fn create(
     ty: &syn::Type,
-    surface: Option<syn::Ident>,
     generics: &syn::Generics,
     trait_: Option<syn::Ident>,
     methods: &[Method],
@@ -304,11 +291,6 @@ fn create(
     } else {
         quote! { MutableConstraint }
     };
-    let surface_mut = surface
-        .clone()
-        .map(|s| quote::format_ident!("{s}Mut"))
-        .unwrap_or_else(|| parse_quote! { __ComemoSurfaceMut });
-    let surface = surface.unwrap_or_else(|| parse_quote! { __ComemoSurface });
     Ok(quote! {
         impl #impl_params ::comemo::Track for #ty #where_clause {}
 
@@ -334,8 +316,8 @@ fn create(
 
         #[doc(hidden)]
         impl #impl_params ::comemo::internal::Surfaces for #ty  #where_clause {
-            type Surface<#t> = #surface #type_params_t where Self: #t;
-            type SurfaceMut<#t> = #surface_mut #type_params_t where Self: #t;
+            type Surface<#t> = __ComemoSurface #type_params_t where Self: #t;
+            type SurfaceMut<#t> = __ComemoSurfaceMut #type_params_t where Self: #t;
 
             #[inline]
             fn surface_ref<#t, #r>(
@@ -363,20 +345,20 @@ fn create(
         }
 
         #[repr(transparent)]
-        pub struct #surface #impl_params_t(::comemo::Tracked<#t, #ty>)
+        pub struct __ComemoSurface #impl_params_t(::comemo::Tracked<#t, #ty>)
         #where_clause;
 
         #[allow(dead_code)]
-        impl #impl_params_t #prefix #surface #type_params_t {
+        impl #impl_params_t #prefix __ComemoSurface #type_params_t {
             #(#wrapper_methods)*
         }
 
         #[repr(transparent)]
-        pub struct #surface_mut #impl_params_t(::comemo::TrackedMut<#t, #ty>)
+        pub struct __ComemoSurfaceMut #impl_params_t(::comemo::TrackedMut<#t, #ty>)
         #where_clause;
 
         #[allow(dead_code)]
-        impl #impl_params_t #prefix #surface_mut #type_params_t {
+        impl #impl_params_t #prefix __ComemoSurfaceMut #type_params_t {
             #(#wrapper_methods_mut)*
         }
     })

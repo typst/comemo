@@ -150,18 +150,15 @@ mod tests {
     #[serial]
     fn test_tracked_trait() {
         #[memoize]
-        fn traity(
-            loader: Tracked<dyn Loader + Send + Sync + '_>,
-            path: &Path,
-        ) -> Vec<u8> {
+        fn traity(loader: Tracked<dyn Loader + '_>, path: &Path) -> Vec<u8> {
             loader.load(path).unwrap()
         }
 
-        fn wrapper(loader: &(dyn Loader + Send + Sync), path: &Path) -> Vec<u8> {
+        fn wrapper(loader: &(dyn Loader), path: &Path) -> Vec<u8> {
             traity(loader.track(), path)
         }
 
-        let loader: &(dyn Loader + Send + Sync) = &StaticLoader;
+        let loader: &(dyn Loader) = &StaticLoader;
         test!(miss: traity(loader.track(), Path::new("hi.rs")), [1, 2, 3]);
         test!(hit: traity(loader.track(), Path::new("hi.rs")), [1, 2, 3]);
         test!(miss: traity(loader.track(), Path::new("bye.rs")), [1, 2, 3]);
