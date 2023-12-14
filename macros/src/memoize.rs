@@ -130,7 +130,7 @@ fn process(function: &Function) -> Result<TokenStream> {
             #output,
         > = ::comemo::internal::Cache::new(|| {
             ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
-            ::std::default::Default::default()
+            ::core::default::Default::default()
         });
 
         #(#bounds;)*

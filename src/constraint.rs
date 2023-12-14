@@ -135,9 +135,9 @@ impl<T: Call> MutableConstraint<T> {
     where
         F: FnMut(&T),
     {
-        for call in &self.0.read().0 {
-            if call.call.is_mutable() {
-                f(&call.call);
+        for entry in &self.0.read().0 {
+            if entry.call.is_mutable() {
+                f(&entry.call);
             }
         }
     }
@@ -245,8 +245,8 @@ impl<T: Call> Join for ImmutableConstraint<T> {
     #[inline]
     fn join(&self, inner: &Self) {
         let mut this = self.0.write();
-        for call in inner.0.read().0.values() {
-            this.push_inner(Cow::Borrowed(call));
+        for entry in inner.0.read().0.values() {
+            this.push_inner(Cow::Borrowed(entry));
         }
     }
 
@@ -260,8 +260,8 @@ impl<T: Call> Join for MutableConstraint<T> {
     #[inline]
     fn join(&self, inner: &Self) {
         let mut this = self.0.write();
-        for call in inner.0.read().0.iter() {
-            this.push_inner(Cow::Borrowed(call));
+        for entry in inner.0.read().0.iter() {
+            this.push_inner(Cow::Borrowed(entry));
         }
     }
 

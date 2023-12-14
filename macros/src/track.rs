@@ -213,7 +213,6 @@ fn create_variants(methods: &[Method]) -> TokenStream {
         enum __ComemoVariant {
             #(#variants,)*
         }
-
     }
 }
 
@@ -291,6 +290,7 @@ fn create(
     } else {
         quote! { MutableConstraint }
     };
+
     Ok(quote! {
         impl #impl_params ::comemo::Track for #ty #where_clause {}
 
