@@ -1,6 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use crate::cache::Join;
+use crate::constraint::Join;
 use crate::track::{Track, Tracked, TrackedMut, Validate};
 
 /// Ensure a type is suitable as input.

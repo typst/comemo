@@ -129,13 +129,9 @@ fn process(function: &Function) -> Result<TokenStream> {
             <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
             #output,
         > = ::comemo::internal::Cache::new(|| {
-            ::comemo::internal::register_cache(evict);
-            ::comemo::internal::RwLock::new(::comemo::internal::CacheData::new())
+            ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
+            ::std::default::Default::default()
         });
-
-        fn evict(max_age: usize) {
-            __CACHE.write().evict(max_age);
-        }
 
         #(#bounds;)*
         ::comemo::internal::memoized(

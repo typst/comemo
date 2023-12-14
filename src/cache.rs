@@ -1,80 +1,18 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::hash::Hash;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use once_cell::sync::Lazy;
-use parking_lot::{
-    MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
+use parking_lot::RwLock;
 use siphasher::sip128::{Hasher128, SipHasher13};
 
+use crate::accelerate;
+use crate::constraint::Join;
 use crate::input::Input;
 
-pub type Accelerator = Mutex<HashMap<u128, u128>>;
+/// The global list of eviction functions.
+static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
 
-/// The global list of caches.
-static CACHES: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
-
-/// The global list of currently alive accelerators.
-static ACCELERATORS: RwLock<(usize, Vec<Accelerator>)> = RwLock::new((0, Vec::new()));
-
-/// The current ID of the accelerator.
-static ID: AtomicUsize = AtomicUsize::new(0);
-
-/// Register a cache in the global list.
-pub fn register_cache(fun: fn(usize)) {
-    CACHES.write().push(fun);
-}
-
-/// Generate a new accelerator.
-/// Will allocate a new accelerator if the ID is larger than the current capacity.
-pub fn id() -> usize {
-    // Get the next ID.
-    ID.fetch_add(1, Ordering::SeqCst)
-}
-
-/// Get an accelerator by ID.
-fn accelerator(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>> {
-    #[cold]
-    fn resize_accelerators(len: usize) {
-        let mut accelerators = ACCELERATORS.write();
-
-        if len <= accelerators.1.len() {
-            return;
-        }
-
-        accelerators.1.resize_with(len, || Mutex::new(HashMap::new()));
-    }
-
-    // We always lock the accelerators, as we need to make sure that the
-    // accelerator is not removed while we are reading it.
-    let mut accelerators = ACCELERATORS.read();
-
-    let offset = accelerators.0;
-    if id < offset {
-        return None;
-    }
-
-    if id - offset >= accelerators.1.len() {
-        drop(accelerators);
-        resize_accelerators(id - offset + 1);
-        accelerators = ACCELERATORS.read();
-    }
-
-    // Because we release the lock before resizing the accelerator,
-    // we need to check again whether the ID is still valid because
-    // another thread might evicted the cache.
-    let i = id - accelerators.0;
-    if id < offset {
-        return None;
-    }
-
-    Some(RwLockReadGuard::map(accelerators, move |accelerators| &accelerators.1[i]))
-}
-
-#[cfg(feature = "last_was_hit")]
+#[cfg(feature = "testing")]
 thread_local! {
     /// Whether the last call was a hit.
     static LAST_WAS_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -100,7 +38,7 @@ where
     };
 
     // Check if there is a cached output.
-    let borrow = cache.read();
+    let borrow = cache.0.read();
     if let Some((constrained, value)) = borrow.lookup::<In>(key, &input) {
         // Replay the mutations.
         input.replay(constrained);
@@ -108,7 +46,7 @@ where
         // Add the cached constraints to the outer ones.
         input.retrack(constraint).1.join(constrained);
 
-        #[cfg(feature = "last_was_hit")]
+        #[cfg(feature = "testing")]
         LAST_WAS_HIT.with(|cell| cell.set(true));
 
         return value.clone();
@@ -126,19 +64,13 @@ where
     outer.join(constraint);
 
     // Insert the result into the cache.
-    let mut borrow = cache.write();
+    let mut borrow = cache.0.write();
     borrow.insert::<In>(key, constraint.take(), output.clone());
 
-    #[cfg(feature = "last_was_hit")]
+    #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
 
     output
-}
-
-/// Whether the last call was a hit.
-#[cfg(feature = "last_was_hit")]
-pub fn last_was_hit() -> bool {
-    LAST_WAS_HIT.with(|cell| cell.get())
 }
 
 /// Evict the cache.
@@ -151,22 +83,25 @@ pub fn last_was_hit() -> bool {
 /// Comemo's cache is thread-local, meaning that this only evicts this thread's
 /// cache.
 pub fn evict(max_age: usize) {
-    for subevict in CACHES.read().iter() {
+    for subevict in EVICTORS.read().iter() {
         subevict(max_age);
     }
 
-    // Evict all accelerators.
-    let mut accelerators = ACCELERATORS.write();
-
-    // Update the offset.
-    accelerators.0 = ID.load(Ordering::SeqCst);
-
-    // Clear all accelerators while keeping the memory allocated.
-    accelerators.1.iter_mut().for_each(|accelerator| {
-        accelerator.lock().clear();
-    })
+    accelerate::evict();
 }
 
+/// Register an eviction function in the global list.
+pub fn register_evictor(evict: fn(usize)) {
+    EVICTORS.write().push(evict);
+}
+
+/// Whether the last call was a hit.
+#[cfg(feature = "testing")]
+pub fn last_was_hit() -> bool {
+    LAST_WAS_HIT.with(|cell| cell.get())
+}
+
+/// A cache for a single memoized function.
 pub struct Cache<C, Out>(Lazy<RwLock<CacheData<C, Out>>>);
 
 impl<C: 'static, Out: 'static> Cache<C, Out> {
@@ -179,37 +114,21 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
         Self(Lazy::new(init))
     }
 
-    /// Write to the inner cache.
-    pub fn write(&self) -> RwLockWriteGuard<'_, CacheData<C, Out>> {
-        self.0.write()
-    }
-
-    /// Read from the inner cache.
-    fn read(&self) -> RwLockReadGuard<'_, CacheData<C, Out>> {
-        self.0.read()
+    /// Evict all entries whose age is larger than or equal to `max_age`.
+    pub fn evict(&self, max_age: usize) {
+        self.0.write().evict(max_age)
     }
 }
 
-/// The global cache.
+/// The internal data for a cache.
 pub struct CacheData<C, Out> {
     /// Maps from hashes to memoized results.
     entries: HashMap<u128, Vec<CacheEntry<C, Out>>>,
 }
 
-impl<C, Out> Default for CacheData<C, Out> {
-    fn default() -> Self {
-        Self { entries: HashMap::new() }
-    }
-}
-
 impl<C, Out: 'static> CacheData<C, Out> {
-    /// Create an empty cache.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Evict all entries whose age is larger than or equal to `max_age`.
-    pub fn evict(&mut self, max_age: usize) {
+    fn evict(&mut self, max_age: usize) {
         self.entries.retain(|_, entries| {
             entries.retain_mut(|entry| {
                 let age = entry.age.get_mut();
@@ -244,6 +163,12 @@ impl<C, Out: 'static> CacheData<C, Out> {
     }
 }
 
+impl<C, Out> Default for CacheData<C, Out> {
+    fn default() -> Self {
+        Self { entries: HashMap::new() }
+    }
+}
+
 /// A memoized result.
 struct CacheEntry<C, Out> {
     /// The memoized function's constraint.
@@ -272,293 +197,5 @@ impl<C, Out: 'static> CacheEntry<C, Out> {
             self.age.store(0, Ordering::SeqCst);
             (&self.constraint, &self.output)
         })
-    }
-}
-
-/// A call to a tracked function.
-pub trait Call {
-    /// Whether the call is mutable.
-    fn is_mutable(&self) -> bool;
-}
-
-/// A call entry.
-#[derive(Clone)]
-struct ConstraintEntry<T: Call> {
-    args: T,
-    args_hash: u128,
-    ret: u128,
-}
-
-/// Defines a constraint for a tracked type.
-pub struct ImmutableConstraint<T: Call>(RwLock<HashMap<u128, ConstraintEntry<T>>>);
-
-impl<T: Hash + PartialEq + Clone + Call> ImmutableConstraint<T> {
-    /// Create empty constraints.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Enter a constraint for a call to an immutable function.
-    #[inline]
-    pub fn push(&self, args: T, ret: u128) {
-        let args_hash = hash(&args);
-        self.push_inner(Cow::Owned(ConstraintEntry { args, args_hash, ret }));
-    }
-
-    /// Enter a constraint for a call to an immutable function.
-    #[inline]
-    fn push_inner(&self, call: Cow<ConstraintEntry<T>>) {
-        let mut calls = self.0.write();
-        debug_assert!(!call.args.is_mutable());
-
-        if let Some(_prev) = calls.get(&call.args_hash) {
-            #[cfg(debug_assertions)]
-            check(_prev, &call);
-
-            return;
-        }
-
-        calls.insert(call.args_hash, call.into_owned());
-    }
-
-    /// Whether the method satisfies as all input-output pairs.
-    #[inline]
-    pub fn validate<F>(&self, mut f: F) -> bool
-    where
-        F: FnMut(&T) -> u128,
-    {
-        self.0.read().values().all(|entry| f(&entry.args) == entry.ret)
-    }
-
-    /// Whether the method satisfies as all input-output pairs.
-    #[inline]
-    pub fn validate_with_id<F>(&self, mut f: F, id: usize) -> bool
-    where
-        F: FnMut(&T) -> u128,
-    {
-        let accelerator = accelerator(id);
-        let inner = self.0.read();
-        if let Some(accelerator) = accelerator {
-            let mut map = accelerator.lock();
-            inner.values().all(|entry| {
-                *map.entry(entry.args_hash).or_insert_with(|| f(&entry.args)) == entry.ret
-            })
-        } else {
-            inner.values().all(|entry| f(&entry.args) == entry.ret)
-        }
-    }
-
-    /// Replay all input-output pairs.
-    #[inline]
-    pub fn replay<F>(&self, _: F)
-    where
-        F: FnMut(&T),
-    {
-        #[cfg(debug_assertions)]
-        for entry in self.0.read().values() {
-            assert!(!entry.args.is_mutable());
-        }
-    }
-}
-
-impl<T: Clone + Call> Clone for ImmutableConstraint<T> {
-    fn clone(&self) -> Self {
-        Self(RwLock::new(self.0.read().clone()))
-    }
-}
-
-impl<T: Call> Default for ImmutableConstraint<T> {
-    fn default() -> Self {
-        Self(RwLock::new(HashMap::default()))
-    }
-}
-
-/// Defines a constraint for a tracked type.
-pub struct MutableConstraint<T: Call>(RwLock<Inner<T>>);
-
-impl<T: Hash + PartialEq + Clone + Call> MutableConstraint<T> {
-    /// Create empty constraints.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Enter a constraint for a call to an immutable function.
-    #[inline]
-    pub fn push(&self, args: T, ret: u128) {
-        let args_hash = hash(&args);
-        self.0
-            .write()
-            .push_inner(Cow::Owned(ConstraintEntry { args, args_hash, ret }));
-    }
-
-    /// Whether the method satisfies as all input-output pairs.
-    #[inline]
-    pub fn validate<F>(&self, mut f: F) -> bool
-    where
-        F: FnMut(&T) -> u128,
-    {
-        self.0.read().calls.iter().all(|entry| f(&entry.args) == entry.ret)
-    }
-
-    /// Whether the method satisfies as all input-output pairs.
-    ///
-    /// On mutable tracked types, this does not use an accelerator as it is
-    /// rarely, if ever used. Therefore, it is not worth the overhead.
-    #[inline]
-    pub fn validate_with_id<F>(&self, mut f: F, _: usize) -> bool
-    where
-        F: FnMut(&T) -> u128,
-    {
-        let inner = self.0.read();
-        inner.calls.iter().all(|entry| f(&entry.args) == entry.ret)
-    }
-
-    /// Replay all input-output pairs.
-    #[inline]
-    pub fn replay<F>(&self, mut f: F)
-    where
-        F: FnMut(&T),
-    {
-        for call in self.0.read().calls.iter().filter(|call| call.args.is_mutable()) {
-            f(&call.args);
-        }
-    }
-}
-
-impl<T: Clone + Call> Clone for MutableConstraint<T> {
-    fn clone(&self) -> Self {
-        Self(RwLock::new(self.0.read().clone()))
-    }
-}
-
-impl<T: Call> Default for MutableConstraint<T> {
-    fn default() -> Self {
-        Self(RwLock::new(Inner { calls: Vec::new() }))
-    }
-}
-
-#[derive(Clone)]
-struct Inner<T: Call> {
-    /// The list of calls.
-    ///
-    /// Order matters here, as those are mutable & immutable calls.
-    calls: Vec<ConstraintEntry<T>>,
-}
-
-impl<T: Hash + PartialEq + Clone + Call> Inner<T> {
-    /// Enter a constraint for a call to a function.
-    ///
-    /// If the function is immutable, it uses a fast-path based on a
-    /// `HashMap` to perform deduplication. Otherwise, it always
-    /// pushes the call to the list.
-    #[inline]
-    fn push_inner(&mut self, call: Cow<ConstraintEntry<T>>) {
-        // If the call is immutable check whether we already have a call
-        // with the same arguments and return value.
-        let mutable = call.args.is_mutable();
-        if !mutable {
-            for entry in self.calls.iter().rev() {
-                if call.args.is_mutable() {
-                    break;
-                }
-
-                if call.args_hash == entry.args_hash && call.ret == entry.ret {
-                    #[cfg(debug_assertions)]
-                    check(&call, entry);
-
-                    return;
-                }
-            }
-        }
-
-        // Insert the call into the call list.
-        self.calls.push(call.into_owned());
-    }
-}
-
-impl<T: Call> Default for Inner<T> {
-    fn default() -> Self {
-        Self { calls: Vec::new() }
-    }
-}
-
-/// Extend an outer constraint by an inner one.
-pub trait Join<T = Self> {
-    /// Join this constraint with the `inner` one.
-    fn join(&self, inner: &T);
-
-    /// Take out the constraint.
-    fn take(&self) -> Self;
-}
-
-impl<T: Join> Join<T> for Option<&T> {
-    #[inline]
-    fn join(&self, inner: &T) {
-        if let Some(outer) = self {
-            outer.join(inner);
-        }
-    }
-
-    #[inline]
-    fn take(&self) -> Self {
-        unimplemented!("cannot call `Join::take` on optional constraint")
-    }
-}
-
-impl<T: Hash + Clone + PartialEq + Call> Join for MutableConstraint<T> {
-    #[inline]
-    fn join(&self, inner: &Self) {
-        let mut this = self.0.write();
-        for call in inner.0.read().calls.iter() {
-            this.push_inner(Cow::Borrowed(call));
-        }
-    }
-
-    #[inline]
-    fn take(&self) -> Self {
-        Self(RwLock::new(std::mem::take(&mut *self.0.write())))
-    }
-}
-
-impl<T: Hash + Clone + PartialEq + Call> Join for ImmutableConstraint<T> {
-    #[inline]
-    fn join(&self, inner: &Self) {
-        for call in inner.0.read().values() {
-            self.push_inner(Cow::Borrowed(call));
-        }
-    }
-
-    #[inline]
-    fn take(&self) -> Self {
-        Self(RwLock::new(std::mem::take(&mut *self.0.write())))
-    }
-}
-
-/// Produce a 128-bit hash of a value.
-#[inline]
-pub fn hash<T: Hash>(value: &T) -> u128 {
-    let mut state = SipHasher13::new();
-    value.hash(&mut state);
-    state.finish128().as_u128()
-}
-
-/// Check for a constraint violation.
-#[inline]
-#[track_caller]
-#[allow(dead_code)]
-fn check<T: PartialEq + Call>(lhs: &ConstraintEntry<T>, rhs: &ConstraintEntry<T>) {
-    if lhs.ret != rhs.ret {
-        panic!(
-            "comemo: found conflicting constraints. \
-             is this tracked function pure?"
-        )
-    }
-
-    // Additional checks for debugging.
-    if lhs.args_hash != rhs.args_hash || lhs.args != rhs.args {
-        panic!(
-            "comemo: found conflicting `check` arguments. \
-             this is a bug in comemo"
-        )
     }
 }

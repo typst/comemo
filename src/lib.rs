@@ -82,7 +82,9 @@ For the full example see [`examples/calc.rs`][calc].
 [calc]: https://github.com/typst/comemo/blob/main/examples/calc.rs
 */
 
+mod accelerate;
 mod cache;
+mod constraint;
 mod input;
 mod prehashed;
 mod track;
@@ -97,14 +99,11 @@ pub use comemo_macros::{memoize, track};
 pub mod internal {
     pub use parking_lot::RwLock;
 
-    pub use crate::cache::{
-        hash, memoized, register_cache, Accelerator, Cache, CacheData, Call,
-        ImmutableConstraint, MutableConstraint,
-    };
-
+    pub use crate::cache::{memoized, register_evictor, Cache, CacheData};
+    pub use crate::constraint::{hash, Call, ImmutableConstraint, MutableConstraint};
     pub use crate::input::{assert_hashable_or_trackable, Args, Input};
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Surfaces};
 
-    #[cfg(feature = "last_was_hit")]
+    #[cfg(feature = "testing")]
     pub use crate::cache::last_was_hit;
 }
