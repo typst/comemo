@@ -7,7 +7,7 @@ pub fn expand(item: &syn::Item) -> Result<proc_macro2::TokenStream> {
     };
 
     // Preprocess and validate the function.
-    let function = prepare(&item)?;
+    let function = prepare(item)?;
 
     // Rewrite the function's body to memoize it.
     process(&function)
@@ -23,7 +23,7 @@ struct Function {
 /// An argument to a memoized function.
 enum Argument {
     Receiver(syn::Token![self]),
-    Ident(Option<syn::Token![mut]>, syn::Ident),
+    Ident(Box<syn::Type>, Option<syn::Token![mut]>, syn::Ident),
 }
 
 /// Preprocess and validate a function.
@@ -71,7 +71,7 @@ fn prepare_arg(input: &syn::FnArg) -> Result<Argument> {
                 bail!(typed.ty, "memoized functions cannot have mutable parameters")
             }
 
-            Argument::Ident(mutability.clone(), ident.clone())
+            Argument::Ident(typed.ty.clone(), *mutability, ident.clone())
         }
     })
 }
@@ -82,7 +82,7 @@ fn process(function: &Function) -> Result<TokenStream> {
     let bounds = function.args.iter().map(|arg| {
         let val = match arg {
             Argument::Receiver(token) => quote! { #token },
-            Argument::Ident(_, ident) => quote! { #ident },
+            Argument::Ident(_, _, ident) => quote! { #ident },
         };
         quote_spanned! { function.item.span() =>
             ::comemo::internal::assert_hashable_or_trackable(&#val);
@@ -94,14 +94,20 @@ fn process(function: &Function) -> Result<TokenStream> {
         Argument::Receiver(token) => quote! {
             ::comemo::internal::hash(&#token)
         },
-        Argument::Ident(_, ident) => quote! { #ident },
+        Argument::Ident(_, _, ident) => quote! { #ident },
     });
     let arg_tuple = quote! { (#(#args,)*) };
+
+    let arg_tys = function.args.iter().map(|arg| match arg {
+        Argument::Receiver(_) => quote! { () },
+        Argument::Ident(ty, _, _) => quote! { #ty },
+    });
+    let arg_ty_tuple = quote! { (#(#arg_tys,)*) };
 
     // Construct a tuple for all parameters.
     let params = function.args.iter().map(|arg| match arg {
         Argument::Receiver(_) => quote! { _ },
-        Argument::Ident(mutability, ident) => quote! { #mutability #ident },
+        Argument::Ident(_, mutability, ident) => quote! { #mutability #ident },
     });
     let param_tuple = quote! { (#(#params,)*) };
 
@@ -118,14 +124,20 @@ fn process(function: &Function) -> Result<TokenStream> {
         ident.mutability = None;
     }
 
-    let unique = quote! { __ComemoUnique };
     wrapped.block = parse_quote! { {
-        struct #unique;
+        static __CACHE: ::comemo::internal::Cache<
+            <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
+            #output,
+        > = ::comemo::internal::Cache::new(|| {
+            ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
+            ::core::default::Default::default()
+        });
+
         #(#bounds;)*
         ::comemo::internal::memoized(
-            ::core::any::TypeId::of::<#unique>(),
             ::comemo::internal::Args(#arg_tuple),
             &::core::default::Default::default(),
+            &__CACHE,
             #closure,
         )
     } };

@@ -1,7 +1,8 @@
 use std::fmt::{self, Debug, Formatter};
 use std::ops::{Deref, DerefMut};
 
-use crate::cache::{id, Join};
+use crate::accelerate;
+use crate::constraint::Join;
 
 /// A trackable type.
 ///
@@ -12,7 +13,11 @@ pub trait Track: Validate + Surfaces {
     /// Start tracking all accesses to a value.
     #[inline]
     fn track(&self) -> Tracked<Self> {
-        Tracked { value: self, constraint: None, id: id() }
+        Tracked {
+            value: self,
+            constraint: None,
+            id: accelerate::id(),
+        }
     }
 
     /// Start tracking all accesses and mutations to a value.
@@ -27,7 +32,7 @@ pub trait Track: Validate + Surfaces {
         Tracked {
             value: self,
             constraint: Some(constraint),
-            id: id(),
+            id: accelerate::id(),
         }
     }
 
@@ -227,7 +232,7 @@ where
         Tracked {
             value: this.value,
             constraint: this.constraint,
-            id: id(),
+            id: accelerate::id(),
         }
     }
 
@@ -240,7 +245,7 @@ where
         Tracked {
             value: this.value,
             constraint: this.constraint,
-            id: id(),
+            id: accelerate::id(),
         }
     }
 

@@ -1,8 +1,11 @@
+//! Run with `cargo test --all-features`.
+
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 
 use comemo::{evict, memoize, track, Track, Tracked, TrackedMut, Validate};
+use serial_test::serial;
 
 macro_rules! test {
     (miss: $call:expr, $result:expr) => {{
@@ -17,6 +20,7 @@ macro_rules! test {
 
 /// Test basic memoization.
 #[test]
+#[serial]
 fn test_basic() {
     #[memoize]
     fn empty() -> String {
@@ -71,6 +75,7 @@ fn test_basic() {
 
 /// Test the calc language.
 #[test]
+#[serial]
 fn test_calc() {
     #[memoize]
     fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
@@ -116,6 +121,7 @@ impl Files {
 
 /// Test cache eviction.
 #[test]
+#[serial]
 fn test_evict() {
     #[memoize]
     fn null() -> u8 {
@@ -141,17 +147,18 @@ fn test_evict() {
 
 /// Test tracking a trait object.
 #[test]
+#[serial]
 fn test_tracked_trait() {
     #[memoize]
     fn traity(loader: Tracked<dyn Loader + '_>, path: &Path) -> Vec<u8> {
         loader.load(path).unwrap()
     }
 
-    fn wrapper(loader: &dyn Loader, path: &Path) -> Vec<u8> {
+    fn wrapper(loader: &(dyn Loader), path: &Path) -> Vec<u8> {
         traity(loader.track(), path)
     }
 
-    let loader: &dyn Loader = &StaticLoader;
+    let loader: &(dyn Loader) = &StaticLoader;
     test!(miss: traity(loader.track(), Path::new("hi.rs")), [1, 2, 3]);
     test!(hit: traity(loader.track(), Path::new("hi.rs")), [1, 2, 3]);
     test!(miss: traity(loader.track(), Path::new("bye.rs")), [1, 2, 3]);
@@ -159,7 +166,7 @@ fn test_tracked_trait() {
 }
 
 #[track]
-trait Loader {
+trait Loader: Send + Sync {
     fn load(&self, path: &Path) -> Result<Vec<u8>, String>;
 }
 
@@ -172,6 +179,7 @@ impl Loader for StaticLoader {
 
 /// Test memoized methods.
 #[test]
+#[serial]
 fn test_memoized_methods() {
     #[derive(Hash)]
     struct Taker(String);
@@ -197,6 +205,7 @@ fn test_memoized_methods() {
 
 /// Test different kinds of arguments.
 #[test]
+#[serial]
 fn test_kinds() {
     #[memoize]
     fn selfie(tester: Tracky) -> String {
@@ -212,27 +221,12 @@ fn test_kinds() {
         }
     }
 
-    #[memoize]
-    fn generic<T>(tester: Tracky, name: T) -> String
-    where
-        T: AsRef<str> + Hash,
-    {
-        tester.double_ref(name.as_ref()).to_string()
-    }
-
-    #[memoize]
-    fn ignorant(tester: Tracky, name: impl AsRef<str> + Hash) -> String {
-        tester.arg_ref(name.as_ref()).to_string()
-    }
-
     let mut tester = Tester { data: "Hi".to_string() };
 
     let tracky = tester.track();
     test!(miss: selfie(tracky), "Hi");
     test!(miss: unconditional(tracky), "Short");
     test!(hit: unconditional(tracky), "Short");
-    test!(miss: generic(tracky, "World"), "World");
-    test!(miss: ignorant(tracky, "Ignorant"), "Ignorant");
     test!(hit: selfie(tracky), "Hi");
 
     tester.data.push('!');
@@ -240,15 +234,11 @@ fn test_kinds() {
     let tracky = tester.track();
     test!(miss: selfie(tracky), "Hi!");
     test!(miss: unconditional(tracky), "Short");
-    test!(hit: generic(tracky, "World"), "World");
-    test!(hit: ignorant(tracky, "Ignorant"), "Ignorant");
 
     tester.data.push_str(" Let's go.");
 
     let tracky = tester.track();
     test!(miss: unconditional(tracky), "Long");
-    test!(miss: generic(tracky, "World"), "Hi! Let's go.");
-    test!(hit: ignorant(tracky, "Ignorant"), "Ignorant");
 }
 
 /// Test with type alias.
@@ -296,6 +286,7 @@ impl Empty {}
 
 /// Test tracking a type with a lifetime.
 #[test]
+#[serial]
 fn test_lifetime() {
     #[comemo::memoize]
     fn contains_hello(lifeful: Tracked<Lifeful>) -> bool {
@@ -323,6 +314,7 @@ impl<'a> Lifeful<'a> {
 
 /// Test tracking a type with a chain of tracked values.
 #[test]
+#[serial]
 fn test_chain() {
     #[comemo::memoize]
     fn process(chain: Tracked<Chain>, value: u32) -> bool {
@@ -348,6 +340,7 @@ fn test_chain() {
 
 /// Test that `Tracked<T>` is covariant over `T`.
 #[test]
+#[serial]
 #[allow(unused, clippy::needless_lifetimes)]
 fn test_variance() {
     fn foo<'a>(_: Tracked<'a, Chain<'a>>) {}
@@ -384,33 +377,34 @@ impl<'a> Chain<'a> {
 }
 
 /// Test mutable tracking.
-#[test]
-#[rustfmt::skip]
-fn test_mutable() {
-    #[comemo::memoize]
-    fn dump(mut sink: TrackedMut<Emitter>) {
-        sink.emit("a");
-        sink.emit("b");
-        let c = sink.len_or_ten().to_string();
-        sink.emit(&c);
-    }
+    #[test]
+    #[serial]
+    #[rustfmt::skip]
+    fn test_mutable() {
+        #[comemo::memoize]
+        fn dump(mut sink: TrackedMut<Emitter>) {
+            sink.emit("a");
+            sink.emit("b");
+            let c = sink.len_or_ten().to_string();
+            sink.emit(&c);
+        }
 
-    let mut emitter = Emitter(vec![]);
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(hit: dump(emitter.track_mut()), ());
-    test!(hit: dump(emitter.track_mut()), ());
-    assert_eq!(emitter.0, [
-        "a", "b", "2",
-        "a", "b", "5",
-        "a", "b", "8",
-        "a", "b", "10",
-        "a", "b", "10",
-        "a", "b", "10",
-    ])
-}
+        let mut emitter = Emitter(vec![]);
+        test!(miss: dump(emitter.track_mut()), ());
+        test!(miss: dump(emitter.track_mut()), ());
+        test!(miss: dump(emitter.track_mut()), ());
+        test!(miss: dump(emitter.track_mut()), ());
+        test!(hit: dump(emitter.track_mut()), ());
+        test!(hit: dump(emitter.track_mut()), ());
+        assert_eq!(emitter.0, [
+            "a", "b", "2",
+            "a", "b", "5",
+            "a", "b", "8",
+            "a", "b", "10",
+            "a", "b", "10",
+            "a", "b", "10",
+        ])
+    }
 
 /// A tracked type with a mutable and an immutable method.
 #[derive(Clone)]
@@ -433,6 +427,7 @@ struct Heavy(String);
 
 /// Test a tracked method that is impure.
 #[test]
+#[serial]
 #[cfg(debug_assertions)]
 #[should_panic(
     expected = "comemo: found conflicting constraints. is this tracked function pure?"

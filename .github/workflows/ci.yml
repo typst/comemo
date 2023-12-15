@@ -7,5 +7,5 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build
-      - run: cargo test
+      - run: cargo build --all-features
+      - run: cargo test --all-features
