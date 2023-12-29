@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 
-use comemo::{evict, memoize, track, Track, Tracked, TrackedMut, Validate};
+use comemo::{evict, local_evict, memoize, track, Track, Tracked, TrackedMut, Validate};
 use serial_test::serial;
 
 macro_rules! test {
@@ -377,34 +377,34 @@ impl<'a> Chain<'a> {
 }
 
 /// Test mutable tracking.
-    #[test]
-    #[serial]
-    #[rustfmt::skip]
-    fn test_mutable() {
-        #[comemo::memoize]
-        fn dump(mut sink: TrackedMut<Emitter>) {
-            sink.emit("a");
-            sink.emit("b");
-            let c = sink.len_or_ten().to_string();
-            sink.emit(&c);
-        }
-
-        let mut emitter = Emitter(vec![]);
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(hit: dump(emitter.track_mut()), ());
-        test!(hit: dump(emitter.track_mut()), ());
-        assert_eq!(emitter.0, [
-            "a", "b", "2",
-            "a", "b", "5",
-            "a", "b", "8",
-            "a", "b", "10",
-            "a", "b", "10",
-            "a", "b", "10",
-        ])
+#[test]
+#[serial]
+#[rustfmt::skip]
+fn test_mutable() {
+    #[comemo::memoize]
+    fn dump(mut sink: TrackedMut<Emitter>) {
+        sink.emit("a");
+        sink.emit("b");
+        let c = sink.len_or_ten().to_string();
+        sink.emit(&c);
     }
+
+    let mut emitter = Emitter(vec![]);
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    assert_eq!(emitter.0, [
+        "a", "b", "2",
+        "a", "b", "5",
+        "a", "b", "8",
+        "a", "b", "10",
+        "a", "b", "10",
+        "a", "b", "10",
+    ])
+}
 
 /// A tracked type with a mutable and an immutable method.
 #[derive(Clone)]
@@ -419,6 +419,67 @@ impl Emitter {
     fn len_or_ten(&self) -> usize {
         self.0.len().min(10)
     }
+}
+
+#[test]
+fn test_local() {
+    #[comemo::memoize(local)]
+    fn add(a: u32, b: u32) -> u32 {
+        a + b
+    }
+
+    test!(miss: add(1, 2), 3);
+    test!(hit: add(1, 2), 3);
+    test!(miss: add(2, 3), 5);
+    test!(hit: add(2, 3), 5);
+}
+
+#[test]
+fn test_unsend() {
+    #[comemo::memoize(local)]
+    fn add(_a: u32, _b: u32) -> *mut () {
+        std::ptr::null_mut()
+    }
+
+    test!(miss: add(1, 2), std::ptr::null_mut());
+    test!(hit: add(1, 2), std::ptr::null_mut());
+    test!(miss: add(2, 3), std::ptr::null_mut());
+    test!(hit: add(2, 3), std::ptr::null_mut());
+
+    local_evict(0);
+
+    test!(miss: add(1, 2), std::ptr::null_mut());
+    test!(miss: add(2, 3), std::ptr::null_mut());
+}
+
+/// Test mutable tracking in a local context.
+#[test]
+#[serial]
+#[rustfmt::skip]
+fn test_mutable_local() {
+    #[comemo::memoize(local)]
+    fn dump<'local>(mut sink: TrackedMut<'local, Emitter>) {
+        sink.emit("a");
+        sink.emit("b");
+        let c = sink.len_or_ten().to_string();
+        sink.emit(&c);
+    }
+
+    let mut emitter = Emitter(vec![]);
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    assert_eq!(emitter.0, [
+        "a", "b", "2",
+        "a", "b", "5",
+        "a", "b", "8",
+        "a", "b", "10",
+        "a", "b", "10",
+        "a", "b", "10",
+    ])
 }
 
 /// A non-copy struct that is passed by value to a tracked method.

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -8,6 +9,11 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 use crate::accelerate;
 use crate::constraint::Join;
 use crate::input::Input;
+
+thread_local! {
+    /// The thread-local list of eviction functions.
+    static LOCAL_EVICTORS: RefCell<Vec<fn(usize)>> = const { RefCell::new(Vec::new()) };
+}
 
 /// The global list of eviction functions.
 static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
@@ -90,9 +96,35 @@ pub fn evict(max_age: usize) {
     accelerate::evict();
 }
 
+/// Evict the thread local cache.
+///
+/// This removes all memoized results from the cache whose age is larger than or
+/// equal to `max_age`. The age of a result grows by one during each eviction
+/// and is reset to zero when the result produces a cache hit. Set `max_age` to
+/// zero to completely clear the cache.
+///
+/// Comemo's cache is thread-local, meaning that this only evicts this thread's
+/// cache.
+pub fn local_evict(max_age: usize) {
+    LOCAL_EVICTORS.with_borrow(|cell| {
+        for subevict in cell.iter() {
+            subevict(max_age);
+        }
+    });
+
+    accelerate::evict();
+}
+
 /// Register an eviction function in the global list.
 pub fn register_evictor(evict: fn(usize)) {
     EVICTORS.write().push(evict);
+}
+
+/// Register an eviction function in the global list.
+pub fn register_local_evictor(evict: fn(usize)) {
+    LOCAL_EVICTORS.with_borrow_mut(|cell| {
+        cell.push(evict);
+    })
 }
 
 /// Whether the last call was a hit.

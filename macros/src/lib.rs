@@ -56,6 +56,17 @@ use syn::{parse_quote, Error, Result};
 ///
 /// Furthermore, memoized functions cannot use destructuring patterns in their
 /// arguments.
+/// 
+/// # Local memoization
+/// 
+/// In the case where you would want to explicitely restrict usage to a single
+/// thread, you can use the [`#[memoize(local)]`](macro@memoize) attribute.
+/// This will use thread-local storage for the cache and requires a call to the
+/// [`local_evict`](comemo::local_evict) function to clear the cache.
+/// 
+/// Additionally, if you wish to pass borrowed arguments to a memoized function
+/// you will need to manually annotate it with the `'local` lifetime. This allows
+/// the macro to specify the lifetime of the tracked value correctly.
 ///
 /// # Example
 /// ```
@@ -71,12 +82,26 @@ use syn::{parse_quote, Error, Result};
 ///         })
 ///         .sum()
 /// }
+/// 
+/// // Evaluate a `.calc` script in a thread-local cache.
+/// // /!\ Notice the `'local` lifetime annotation.
+/// #[comemo::memoize(local)]
+/// fn evaluate(script: &'local str, files: &comemo::Tracked<'local, Files>) -> i32 {
+///     script
+///         .split('+')
+///         .map(str::trim)
+///         .map(|part| match part.strip_prefix("eval ") {
+///             Some(path) => evaluate(&files.read(path), files),
+///             None => part.parse::<i32>().unwrap(),
+///         })
+///         .sum()
+/// }
 /// ```
 ///
 #[proc_macro_attribute]
-pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
-    let func = syn::parse_macro_input!(stream as syn::Item);
-    memoize::expand(&func)
+pub fn memoize(stream: BoundaryStream, item: BoundaryStream) -> BoundaryStream {
+    let func = syn::parse_macro_input!(item as syn::Item);
+    memoize::expand(stream.into(), &func)
         .unwrap_or_else(|err| err.to_compile_error())
         .into()
 }
