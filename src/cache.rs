@@ -73,15 +73,12 @@ where
     output
 }
 
-/// Evict the cache.
+/// Evict the global cache.
 ///
 /// This removes all memoized results from the cache whose age is larger than or
 /// equal to `max_age`. The age of a result grows by one during each eviction
 /// and is reset to zero when the result produces a cache hit. Set `max_age` to
 /// zero to completely clear the cache.
-///
-/// Comemo's cache is thread-local, meaning that this only evicts this thread's
-/// cache.
 pub fn evict(max_age: usize) {
     for subevict in EVICTORS.read().iter() {
         subevict(max_age);

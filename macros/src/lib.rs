@@ -54,6 +54,9 @@ use syn::{parse_quote, Error, Result};
 ///   basic mutable arguments, but it cannot determine all sources of impurity,
 ///   so this is your responsibility.
 ///
+/// - The output of a memoized function must be `Send` and `Sync` because it is
+///   stored in the global cache.
+///
 /// Furthermore, memoized functions cannot use destructuring patterns in their
 /// arguments.
 ///
@@ -118,11 +121,14 @@ pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 ///   [`Hash`](std::hash::Hash) and **must feed all the information they expose
 ///   to the hasher**. Otherwise, memoized results might get reused invalidly.
 ///
+/// - The arguments to a tracked method must be `Send` and `Sync` because they
+///   are stored in the global cache.
+///
 /// Furthermore:
 /// - Tracked methods cannot be generic.
 /// - They cannot be `unsafe`, `async` or `const`.
 /// - They must take an `&self` or `&mut self` parameter.
-/// - Their arguments must implement [`ToOwned`](std::borrow::ToOwned).
+/// - Their arguments must implement [`ToOwned`].
 /// - Their return values must implement [`Hash`](std::hash::Hash).
 /// - They cannot use destructuring patterns in their arguments.
 ///
