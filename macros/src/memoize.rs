@@ -1,16 +1,32 @@
+use syn::{parse::{Parse, ParseStream}, token::Token};
+
 use super::*;
 
 /// Memoize a function.
-pub fn expand(item: &syn::Item) -> Result<proc_macro2::TokenStream> {
+pub fn expand(stream: TokenStream, item: &syn::Item) -> Result<proc_macro2::TokenStream> {
+    let meta: Meta = syn::parse2(stream)?;
     let syn::Item::Fn(item) = item else {
         bail!(item, "`memoize` can only be applied to functions and methods");
     };
 
     // Preprocess and validate the function.
-    let function = prepare(item)?;
+    let function = prepare(&meta, item)?;
 
     // Rewrite the function's body to memoize it.
     process(&function)
+}
+
+/// The `..` in `#[memoize(..)]`.
+pub struct Meta {
+    pub local: bool,
+}
+
+impl Parse for Meta {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(Self {
+            local: parse_flag::<kw::local>(input)?,
+        })
+    }
 }
 
 /// Details about a function that should be memoized.
@@ -18,6 +34,7 @@ struct Function {
     item: syn::ItemFn,
     args: Vec<Argument>,
     output: syn::Type,
+    local: bool,
 }
 
 /// An argument to a memoized function.
@@ -27,7 +44,7 @@ enum Argument {
 }
 
 /// Preprocess and validate a function.
-fn prepare(function: &syn::ItemFn) -> Result<Function> {
+fn prepare(meta: &Meta, function: &syn::ItemFn) -> Result<Function> {
     let mut args = vec![];
 
     for input in &function.sig.inputs {
@@ -39,7 +56,7 @@ fn prepare(function: &syn::ItemFn) -> Result<Function> {
         syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
     };
 
-    Ok(Function { item: function.clone(), args, output })
+    Ok(Function { item: function.clone(), args, output, local: meta.local })
 }
 
 /// Preprocess a function argument.
@@ -124,23 +141,69 @@ fn process(function: &Function) -> Result<TokenStream> {
         ident.mutability = None;
     }
 
-    wrapped.block = parse_quote! { {
-        static __CACHE: ::comemo::internal::Cache<
-            <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
-            #output,
-        > = ::comemo::internal::Cache::new(|| {
-            ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
-            ::core::default::Default::default()
-        });
-
-        #(#bounds;)*
-        ::comemo::internal::memoized(
-            ::comemo::internal::Args(#arg_tuple),
-            &::core::default::Default::default(),
-            &__CACHE,
-            #closure,
-        )
-    } };
+    if function.local {
+        wrapped.block = parse_quote! { {
+            type __ARGS<'local> = <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint;
+            ::std::thread_local! {
+                static __CACHE: ::comemo::internal::Cache<
+                    __ARGS<'static>,
+                    #output,
+                > = ::comemo::internal::Cache::new(|| {
+                    ::comemo::internal::register_local_evictor(|max_age| __CACHE.with(|cache| cache.evict(max_age)));
+                    ::core::default::Default::default()
+                });
+            }
+    
+            #(#bounds;)*
+            __CACHE.with(|cache| {
+                ::comemo::internal::memoized(
+                    ::comemo::internal::Args(#arg_tuple),
+                    &::core::default::Default::default(),
+                    &cache,
+                    #closure,
+                )
+            })
+        } };
+    } else {
+        wrapped.block = parse_quote! { {
+            static __CACHE: ::comemo::internal::Cache<
+                <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
+                #output,
+            > = ::comemo::internal::Cache::new(|| {
+                ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
+                ::core::default::Default::default()
+            });
+    
+            #(#bounds;)*
+            ::comemo::internal::memoized(
+                ::comemo::internal::Args(#arg_tuple),
+                &::core::default::Default::default(),
+                &__CACHE,
+                #closure,
+            )
+        } };
+    }
 
     Ok(quote! { #wrapped })
+}
+
+/// Parse a metadata flag that can be present or not.
+pub fn parse_flag<K: Token + Default + Parse>(input: ParseStream) -> Result<bool> {
+    if input.peek(|_| K::default()) {
+        let _: K = input.parse()?;
+        eat_comma(input);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Parse a comma if there is one.
+fn eat_comma(input: ParseStream) {
+    if input.peek(syn::Token![,]) {
+        let _: syn::Token![,] = input.parse().unwrap();
+    }
+}
+
+pub mod kw {
+    syn::custom_keyword!(local);
 }
