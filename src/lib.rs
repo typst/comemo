@@ -94,6 +94,7 @@ pub use crate::cache::evict;
 pub use crate::prehashed::Prehashed;
 pub use crate::track::{Track, Tracked, TrackedMut, Validate};
 pub use comemo_macros::{memoize, track};
+pub use serialization::{serialize,deserialize};
 
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
