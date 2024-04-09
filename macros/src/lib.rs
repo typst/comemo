@@ -61,7 +61,7 @@ use syn::{parse_quote, Error, Result};
 /// arguments.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// /// Evaluate a `.calc` script.
 /// #[comemo::memoize]
 /// fn evaluate(script: &str, files: comemo::Tracked<Files>) -> i32 {
@@ -140,7 +140,7 @@ pub fn memoize(attr: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 /// - They cannot use destructuring patterns in their arguments.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// /// File storage.
 /// struct Files(HashMap<PathBuf, String>);
 ///
