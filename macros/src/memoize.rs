@@ -1,13 +1,13 @@
 use super::*;
 
 /// Memoize a function.
-pub fn expand(item: &syn::Item) -> Result<proc_macro2::TokenStream> {
+pub fn expand(item: &syn::Item, serializable: bool) -> Result<proc_macro2::TokenStream> {
     let syn::Item::Fn(item) = item else {
         bail!(item, "`memoize` can only be applied to functions and methods");
     };
 
     // Preprocess and validate the function.
-    let function = prepare(item)?;
+    let function = prepare(item, serializable)?;
 
     // Rewrite the function's body to memoize it.
     process(&function)
@@ -18,6 +18,7 @@ struct Function {
     item: syn::ItemFn,
     args: Vec<Argument>,
     output: syn::Type,
+    serializable: bool,
 }
 
 /// An argument to a memoized function.
@@ -27,7 +28,7 @@ enum Argument {
 }
 
 /// Preprocess and validate a function.
-fn prepare(function: &syn::ItemFn) -> Result<Function> {
+fn prepare(function: &syn::ItemFn, serializable: bool) -> Result<Function> {
     let mut args = vec![];
 
     for input in &function.sig.inputs {
@@ -39,7 +40,7 @@ fn prepare(function: &syn::ItemFn) -> Result<Function> {
         syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
     };
 
-    Ok(Function { item: function.clone(), args, output })
+    Ok(Function { item: function.clone(), args, output, serializable })
 }
 
 /// Preprocess a function argument.
@@ -79,6 +80,7 @@ fn prepare_arg(input: &syn::FnArg) -> Result<Argument> {
 /// Rewrite a function's body to memoize it.
 fn process(function: &Function) -> Result<TokenStream> {
     // Construct assertions that the arguments fulfill the necessary bounds.
+    // todo: assert serializable/deserializable
     let bounds = function.args.iter().map(|arg| {
         let val = match arg {
             Argument::Receiver(token) => quote! { #token },
@@ -123,13 +125,38 @@ fn process(function: &Function) -> Result<TokenStream> {
         let syn::Pat::Ident(ident) = typed.pat.as_mut() else { continue };
         ident.mutability = None;
     }
+    let name = &function.item;
+    let serialization = if function.serializable {
+        Some(quote! {
+            // todo hash for perf
+            static __UNIQUE_PATH: once_cell::sync::Lazy<String> =
+            once_cell::sync::Lazy::new(|| {
+                format!("{}-{}-{}-", module_path!(), file!(), line!())
+            });
 
+            ::comemo::internal::register_serializer(|| {
+                (
+                    __UNIQUE_PATH.clone(),
+                    ::comemo::internal::bincode::serialize(__CACHE.inner().read().deref())
+                        .unwrap_or_default(),
+                )
+              });
+
+            ::comemo::internal::register_loader(__UNIQUE_PATH.clone(), |data| {
+                *__CACHE.inner().write() =
+                    ::comemo::internal::bincode::deserialize(data).unwrap_or_default();
+            });
+        })
+    } else {
+        None
+    };
     wrapped.block = parse_quote! { {
         static __CACHE: ::comemo::internal::Cache<
             <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
             #output,
         > = ::comemo::internal::Cache::new(|| {
             ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
+            #serialization
             ::core::default::Default::default()
         });
 

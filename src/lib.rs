@@ -87,6 +87,7 @@ mod cache;
 mod constraint;
 mod input;
 mod prehashed;
+mod serialization;
 mod track;
 
 pub use crate::cache::evict;
@@ -102,6 +103,7 @@ pub mod internal {
     pub use crate::cache::{memoized, register_evictor, Cache, CacheData};
     pub use crate::constraint::{hash, Call, ImmutableConstraint, MutableConstraint};
     pub use crate::input::{assert_hashable_or_trackable, Args, Input};
+    pub use crate::serialization::{bincode, register_loader, register_serializer};
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Surfaces};
 
     #[cfg(feature = "testing")]

@@ -77,9 +77,16 @@ use syn::{parse_quote, Error, Result};
 /// ```
 ///
 #[proc_macro_attribute]
-pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
+pub fn memoize(attr: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
     let func = syn::parse_macro_input!(stream as syn::Item);
-    memoize::expand(&func)
+    let serializable = match attr.to_string().as_str() {
+        "serialize" => true,
+        "" => false,
+        invalid => {
+            panic!("invalid attribute: {invalid}\nvalid attributes is `serialize`")
+        }
+    };
+    memoize::expand(&func, serializable)
         .unwrap_or_else(|err| err.to_compile_error())
         .into()
 }
