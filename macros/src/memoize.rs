@@ -1,13 +1,15 @@
+use utils::parse_key_value;
+
 use super::*;
 
 /// Memoize a function.
-pub fn expand(item: &syn::Item) -> Result<proc_macro2::TokenStream> {
+pub fn expand(attrs: TokenStream, item: &syn::Item) -> Result<proc_macro2::TokenStream> {
     let syn::Item::Fn(item) = item else {
         bail!(item, "`memoize` can only be applied to functions and methods");
     };
 
     // Preprocess and validate the function.
-    let function = prepare(item)?;
+    let function = prepare(attrs, item)?;
 
     // Rewrite the function's body to memoize it.
     process(&function)
@@ -18,6 +20,18 @@ struct Function {
     item: syn::ItemFn,
     args: Vec<Argument>,
     output: syn::Type,
+    enabled: Option<syn::Expr>,
+}
+
+/// Additional metadata for a memoized function.
+struct Meta {
+    enabled: Option<syn::Expr>,
+}
+
+impl syn::parse::Parse for Meta {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        Ok(Self { enabled: parse_key_value::<kw::enabled, _>(input)? })
+    }
 }
 
 /// An argument to a memoized function.
@@ -27,9 +41,10 @@ enum Argument {
 }
 
 /// Preprocess and validate a function.
-fn prepare(function: &syn::ItemFn) -> Result<Function> {
-    let mut args = vec![];
+fn prepare(attrs: TokenStream, function: &syn::ItemFn) -> Result<Function> {
+    let meta = syn::parse2::<Meta>(attrs.clone())?;
 
+    let mut args = vec![];
     for input in &function.sig.inputs {
         args.push(prepare_arg(input)?);
     }
@@ -39,7 +54,12 @@ fn prepare(function: &syn::ItemFn) -> Result<Function> {
         syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
     };
 
-    Ok(Function { item: function.clone(), args, output })
+    Ok(Function {
+        item: function.clone(),
+        args,
+        output,
+        enabled: meta.enabled,
+    })
 }
 
 /// Preprocess a function argument.
@@ -88,6 +108,14 @@ fn process(function: &Function) -> Result<TokenStream> {
             ::comemo::internal::assert_hashable_or_trackable(&#val);
         }
     });
+
+    let enabled = function
+        .enabled
+        .as_ref()
+        .map(|value| {
+            quote_spanned! { value.span() => #value }
+        })
+        .unwrap_or_else(|| quote! { true });
 
     // Construct a tuple from all arguments.
     let args = function.args.iter().map(|arg| match arg {
@@ -138,9 +166,14 @@ fn process(function: &Function) -> Result<TokenStream> {
             ::comemo::internal::Args(#arg_tuple),
             &::core::default::Default::default(),
             &__CACHE,
+            #enabled,
             #closure,
         )
     } };
 
     Ok(quote! { #wrapped })
+}
+
+pub mod kw {
+    syn::custom_keyword!(enabled);
 }

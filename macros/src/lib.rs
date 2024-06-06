@@ -12,6 +12,7 @@ macro_rules! bail {
 
 mod memoize;
 mod track;
+mod utils;
 
 use proc_macro::TokenStream as BoundaryStream;
 use proc_macro2::TokenStream;
@@ -60,10 +61,22 @@ use syn::{parse_quote, Error, Result};
 /// Furthermore, memoized functions cannot use destructuring patterns in their
 /// arguments.
 ///
+/// # Disabling memoization
+/// If you want to disable memoization for a function, you can use the `enabled`
+/// attribute to conditionally enable or disable memoization. This is useful for
+/// situations where small calls are more expensive than recomputing the result.
+/// This allows you to bypass hashing and caching while still dealing with the
+/// same function signature. And allows saving memory and time.
+///
+/// By default, all functions are memoized. To disable memoization, you must
+/// specify an `enabled = <expr>` attribute. The expression must evaluate to a
+/// boolean value. If the expression is `false`, the function will be executed
+/// without hashing and caching.
+///
 /// # Example
 /// ```
 /// /// Evaluate a `.calc` script.
-/// #[comemo::memoize]
+/// #[comemo::memoize(enabled = script.len() > 10)]
 /// fn evaluate(script: &str, files: comemo::Tracked<Files>) -> i32 {
 ///     script
 ///         .split('+')
@@ -77,9 +90,10 @@ use syn::{parse_quote, Error, Result};
 /// ```
 ///
 #[proc_macro_attribute]
-pub fn memoize(_: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
+pub fn memoize(args: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
+    let args = syn::parse_macro_input!(args as TokenStream);
     let func = syn::parse_macro_input!(stream as syn::Item);
-    memoize::expand(&func)
+    memoize::expand(args, &func)
         .unwrap_or_else(|err| err.to_compile_error())
         .into()
 }

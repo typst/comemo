@@ -452,3 +452,23 @@ impl Impure {
         VAL.fetch_add(1, Ordering::SeqCst)
     }
 }
+
+#[test]
+#[serial]
+#[cfg(debug_assertions)]
+fn test_with_disabled() {
+    #[comemo::memoize(enabled = size >= 1000)]
+    fn disabled(size: usize) -> usize {
+        size
+    }
+
+    for i in 0..1000 {
+        test!(miss: disabled(i), i);
+        test!(miss: disabled(i), i);
+    }
+
+    for i in 1000..2000 {
+        test!(miss: disabled(i), i);
+        test!(hit: disabled(i), i);
+    }
+}
