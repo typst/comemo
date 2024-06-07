@@ -32,14 +32,11 @@ where
     F: FnOnce(In::Tracked<'c>) -> Out,
 {
     // Bypass hashing and caching if the function is disabled.
-    // We still need to deal with tracking constraints.
+    // We still need to deal with retracking constraints.
     if !enabled {
         // Execute the function with the new constraints hooked in.
-        let (input, outer) = input.retrack(constraint);
+        let (input, _) = input.retrack(constraint);
         let output = func(input);
-
-        // Add the new constraints to the outer ones.
-        outer.join(constraint);
 
         #[cfg(feature = "testing")]
         LAST_WAS_HIT.with(|cell| cell.set(false));
