@@ -146,19 +146,20 @@ fn process(function: &Function) -> Result<TokenStream> {
 
     let param_redefinitions = function.args.iter().filter_map(|arg| match arg {
         Argument::Receiver(_) => None,
-        Argument::Ident(_, mutability, ident) => Some(quote! { let #mutability #ident = #ident; }),
+        Argument::Ident(_, mutability, ident) => {
+            Some(quote! { let #mutability #ident = #ident; })
+        }
     });
 
     // Bypass for disabled memoization.
-    let bypass = function
-        .enabled
-        .as_ref()
-        .map(|enabled| quote! {
+    let bypass = function.enabled.as_ref().map(|enabled| {
+        quote! {
             if !(#enabled) {
                 #(#param_redefinitions)*
                 return #body;
             }
-        });
+        }
+    });
 
     wrapped.block = parse_quote! { {
         static __CACHE: ::comemo::internal::Cache<
