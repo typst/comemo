@@ -23,7 +23,6 @@ pub fn memoized<'c, In, Out, F>(
     mut input: In,
     constraint: &'c In::Constraint,
     cache: &Cache<In::Constraint, Out>,
-    enabled: bool,
     func: F,
 ) -> Out
 where
@@ -31,19 +30,6 @@ where
     Out: Clone + 'static,
     F: FnOnce(In::Tracked<'c>) -> Out,
 {
-    // Bypass hashing and caching if the function is disabled.
-    // We still need to deal with retracking constraints.
-    if !enabled {
-        // Execute the function with the new constraints hooked in.
-        let (input, _) = input.retrack(constraint);
-        let output = func(input);
-
-        #[cfg(feature = "testing")]
-        LAST_WAS_HIT.with(|cell| cell.set(false));
-
-        return output;
-    }
-
     // Compute the hash of the input's key part.
     let key = {
         let mut state = SipHasher13::new();

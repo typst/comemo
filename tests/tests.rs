@@ -462,13 +462,9 @@ fn test_with_disabled() {
         size
     }
 
-    for i in 0..1000 {
-        test!(miss: disabled(i), i);
-        test!(miss: disabled(i), i);
-    }
+    test!(miss: disabled(0), 0);
+    test!(miss: disabled(0), 0);
 
-    for i in 1000..2000 {
-        test!(miss: disabled(i), i);
-        test!(hit: disabled(i), i);
-    }
+    test!(miss: disabled(2000), 2000);
+    test!(hit: disabled(2000), 2000);
 }

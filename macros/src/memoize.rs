@@ -109,14 +109,6 @@ fn process(function: &Function) -> Result<TokenStream> {
         }
     });
 
-    let enabled = function
-        .enabled
-        .as_ref()
-        .map(|value| {
-            quote_spanned! { value.span() => #value }
-        })
-        .unwrap_or_else(|| quote! { true });
-
     // Construct a tuple from all arguments.
     let args = function.args.iter().map(|arg| match arg {
         Argument::Receiver(token) => quote! {
@@ -152,6 +144,22 @@ fn process(function: &Function) -> Result<TokenStream> {
         ident.mutability = None;
     }
 
+    let param_redefinitions = function.args.iter().filter_map(|arg| match arg {
+        Argument::Receiver(_) => None,
+        Argument::Ident(_, mutability, ident) => Some(quote! { let #mutability #ident = #ident; }),
+    });
+
+    // Bypass for disabled memoization.
+    let bypass = function
+        .enabled
+        .as_ref()
+        .map(|enabled| quote! {
+            if !(#enabled) {
+                #(#param_redefinitions)*
+                return #body;
+            }
+        });
+
     wrapped.block = parse_quote! { {
         static __CACHE: ::comemo::internal::Cache<
             <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
@@ -162,11 +170,11 @@ fn process(function: &Function) -> Result<TokenStream> {
         });
 
         #(#bounds;)*
+        #bypass
         ::comemo::internal::memoized(
             ::comemo::internal::Args(#arg_tuple),
             &::core::default::Default::default(),
             &__CACHE,
-            #enabled,
             #closure,
         )
     } };
