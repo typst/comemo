@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
@@ -115,8 +116,13 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
     pub fn evict(&self, max_age: usize) {
         self.0.write().evict(max_age)
     }
+    #[doc(hidden)]
+    pub fn inner(&self) -> &Lazy<RwLock<CacheData<C, Out>>> {
+        &self.0
+    }
 }
 
+#[derive(Serialize, Deserialize)]
 /// The internal data for a cache.
 pub struct CacheData<C, Out> {
     /// Maps from hashes to memoized results.
@@ -166,6 +172,7 @@ impl<C, Out> Default for CacheData<C, Out> {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 /// A memoized result.
 struct CacheEntry<C, Out> {
     /// The memoized function's constraint.

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use comemo::{evict, memoize, track, Track, Tracked, TrackedMut, Validate};
@@ -451,4 +452,33 @@ impl Impure {
         static VAL: AtomicU32 = AtomicU32::new(0);
         VAL.fetch_add(1, Ordering::SeqCst)
     }
+}
+
+#[test]
+#[serial]
+fn feature_store_all() {
+    #[memoize(serialize)]
+    fn empty() -> String {
+        format!("The world is {}", "big")
+    }
+
+    #[memoize(serialize)]
+    fn sum(a: i32, b: i32) -> i32 {
+        a + b
+    }
+
+    test!(miss: empty(),  "The world is big");
+    test!(hit: empty(),  "The world is big");
+
+    test!(miss: sum(1, 2),  3);
+    test!(hit: sum(1, 2),  3);
+
+    let data = comemo::serialize().unwrap();
+    comemo::evict(0);
+    test!(miss: empty(),  "The world is big");
+    test!(miss: sum(1, 2),  3);
+
+    comemo::deserialize(data).unwrap();
+    test!(hit: empty() , "The world is big");
+    test!(hit: sum(1, 2),  3);
 }
