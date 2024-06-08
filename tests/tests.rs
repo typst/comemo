@@ -456,18 +456,29 @@ impl Impure {
 
 #[test]
 #[serial]
-fn feature_store() {
+fn feature_store_all() {
     #[memoize(serialize)]
     fn empty() -> String {
         format!("The world is {}", "big")
     }
 
-    test!(miss: empty(),  "The world is big");
+    #[memoize(serialize)]
+    fn sum(a: i32, b: i32) -> i32 {
+        a + b
+    }
 
+    test!(miss: empty(),  "The world is big");
     test!(hit: empty(),  "The world is big");
-    let data = comemo::serialize();
-    dbg!(data.keys().collect::<Vec<_>>());
+
+    test!(miss: sum(1, 2),  3);
+    test!(hit: sum(1, 2),  3);
+
+    let data = comemo::serialize().unwrap();
     comemo::evict(0);
-    comemo::deserialize(data);
+    test!(miss: empty(),  "The world is big");
+    test!(miss: sum(1, 2),  3);
+
+    comemo::deserialize(data).unwrap();
     test!(hit: empty() , "The world is big");
+    test!(hit: sum(1, 2),  3);
 }

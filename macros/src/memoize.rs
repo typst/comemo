@@ -80,7 +80,7 @@ fn prepare_arg(input: &syn::FnArg) -> Result<Argument> {
 /// Rewrite a function's body to memoize it.
 fn process(function: &Function) -> Result<TokenStream> {
     // Construct assertions that the arguments fulfill the necessary bounds.
-    // todo: assert serializable/deserializable
+    // todo: assert serializable/deserializable somehow?
     let bounds = function.args.iter().map(|arg| {
         let val = match arg {
             Argument::Receiver(token) => quote! { #token },
@@ -125,19 +125,20 @@ fn process(function: &Function) -> Result<TokenStream> {
         let syn::Pat::Ident(ident) = typed.pat.as_mut() else { continue };
         ident.mutability = None;
     }
-    let name = &function.item;
+
     let serialization = if function.serializable {
         Some(quote! {
-            // todo hash for perf
-            static __UNIQUE_PATH: once_cell::sync::Lazy<String> =
+            static __UNIQUE_PATH: ::comemo::internal::once_cell::sync::Lazy<u128> =
             once_cell::sync::Lazy::new(|| {
-                format!("{}-{}-{}-", module_path!(), file!(), line!())
+                ::comemo::internal::hash(
+                    &format!("{}-{}-{}-{}", module_path!(), file!(), line!(), column!())
+                )
             });
 
             ::comemo::internal::register_serializer(|| {
                 (
                     __UNIQUE_PATH.clone(),
-                    ::comemo::internal::bincode::serialize(__CACHE.inner().read().deref())
+                    ::comemo::internal::bincode::serialize(&*__CACHE.inner().read())
                         .unwrap_or_default(),
                 )
               });

@@ -94,7 +94,7 @@ pub use crate::cache::evict;
 pub use crate::prehashed::Prehashed;
 pub use crate::track::{Track, Tracked, TrackedMut, Validate};
 pub use comemo_macros::{memoize, track};
-pub use serialization::{serialize,deserialize};
+pub use serialization::{deserialize, serialize};
 
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
@@ -104,7 +104,9 @@ pub mod internal {
     pub use crate::cache::{memoized, register_evictor, Cache, CacheData};
     pub use crate::constraint::{hash, Call, ImmutableConstraint, MutableConstraint};
     pub use crate::input::{assert_hashable_or_trackable, Args, Input};
-    pub use crate::serialization::{bincode, register_loader, register_serializer};
+    pub use crate::serialization::{
+        bincode, once_cell, register_loader, register_serializer,
+    };
     pub use crate::track::{to_parts_mut_mut, to_parts_mut_ref, to_parts_ref, Surfaces};
 
     #[cfg(feature = "testing")]
