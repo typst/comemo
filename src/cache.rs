@@ -32,6 +32,7 @@ where
     F: FnOnce(In::Tracked<'c>) -> Out,
 {
     // Early bypass if memoization is disabled.
+    // Hopefully the compiler will optimize this away, if the condition is constant.
     if !enabled {
         return memoized_disabled(input, constraint, func);
     }
@@ -79,7 +80,7 @@ where
     output
 }
 
-pub fn memoized_disabled<'c, In, Out, F>(
+fn memoized_disabled<'c, In, Out, F>(
     input: In,
     constraint: &'c In::Constraint,
     func: F,
@@ -96,6 +97,7 @@ where
     // Add the new constraints to the outer ones.
     outer.join(constraint);
 
+    // Ensure that the last call was a miss during testing.
     #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
 
