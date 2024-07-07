@@ -144,22 +144,7 @@ fn process(function: &Function) -> Result<TokenStream> {
         ident.mutability = None;
     }
 
-    let param_redefinitions = function.args.iter().filter_map(|arg| match arg {
-        Argument::Receiver(_) => None,
-        Argument::Ident(_, mutability, ident) => {
-            Some(quote! { let #mutability #ident = #ident; })
-        }
-    });
-
-    // Bypass for disabled memoization.
-    let bypass = function.enabled.as_ref().map(|enabled| {
-        quote! {
-            if !(#enabled) {
-                #(#param_redefinitions)*
-                return #body;
-            }
-        }
-    });
+    let enabled = function.enabled.clone().unwrap_or(parse_quote! { true });
 
     wrapped.block = parse_quote! { {
         static __CACHE: ::comemo::internal::Cache<
@@ -171,11 +156,12 @@ fn process(function: &Function) -> Result<TokenStream> {
         });
 
         #(#bounds;)*
-        #bypass
+
         ::comemo::internal::memoized(
             ::comemo::internal::Args(#arg_tuple),
             &::core::default::Default::default(),
             &__CACHE,
+            #enabled,
             #closure,
         )
     } };

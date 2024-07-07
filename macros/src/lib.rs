@@ -61,6 +61,22 @@ use syn::{parse_quote, Error, Result};
 /// Furthermore, memoized functions cannot use destructuring patterns in their
 /// arguments.
 ///
+/// # Example
+/// ```
+/// /// Evaluate a `.calc` script.
+/// #[comemo::memoize]
+/// fn evaluate(script: &str, files: comemo::Tracked<Files>) -> i32 {
+///     script
+///         .split('+')
+///         .map(str::trim)
+///         .map(|part| match part.strip_prefix("eval ") {
+///             Some(path) => evaluate(&files.read(path), files),
+///             None => part.parse::<i32>().unwrap(),
+///         })
+///         .sum()
+/// }
+/// ```
+///
 /// # Disabling memoization
 /// If you want to disable memoization for a function, you can use the `enabled`
 /// attribute to conditionally enable or disable memoization. This is useful for
@@ -73,19 +89,13 @@ use syn::{parse_quote, Error, Result};
 /// boolean value. If the expression is `false`, the function will be executed
 /// without hashing and caching.
 ///
-/// # Example
+/// ## Example
 /// ```
-/// /// Evaluate a `.calc` script.
-/// #[comemo::memoize(enabled = script.len() > 10)]
-/// fn evaluate(script: &str, files: comemo::Tracked<Files>) -> i32 {
-///     script
-///         .split('+')
-///         .map(str::trim)
-///         .map(|part| match part.strip_prefix("eval ") {
-///             Some(path) => evaluate(&files.read(path), files),
-///             None => part.parse::<i32>().unwrap(),
-///         })
-///         .sum()
+/// /// Compute the sum of a slice of floats, but only memoize if the slice is
+/// /// longer than 1024 elements.
+/// #[comemo::memoize(enabled = add.len() > 1024)]
+/// fn evaluate(add: &[f32]) -> f32 {
+///     add.iter().copied().sum()
 /// }
 /// ```
 ///
