@@ -61,17 +61,19 @@ use syn::{parse_quote, Error, Result};
 /// Furthermore, memoized functions cannot use destructuring patterns in their
 /// arguments.
 ///
-/// # Disabling memoization
-/// If you want to disable memoization for a function, you can use the `enabled`
-/// attribute to conditionally enable or disable memoization. This is useful for
-/// situations where small calls are more expensive than recomputing the result.
-/// This allows you to bypass hashing and caching while still dealing with the
-/// same function signature. And allows saving memory and time.
+/// # Disabling memoization conditionally
+/// If you want to enable or disable memoization for a function conditionally,
+/// you can use the `enabled` attribute. This is useful for cheap function calls
+/// where dealing with the caching is more expensive than recomputing the
+/// result. This allows you to bypass hashing and constraint validation while
+/// still dealing with the same function signature. And allows saving memory and
+/// time.
 ///
-/// By default, all functions are memoized. To disable memoization, you must
-/// specify an `enabled = <expr>` attribute. The expression must evaluate to a
-/// boolean value. If the expression is `false`, the function will be executed
-/// without hashing and caching.
+/// By default, all functions are unconditionally memoized. To disable
+/// memoization conditionally, you must specify an `enabled = <expr>` attribute.
+/// The expression can use the parameters and must evaluate to a boolean value.
+/// If the expression is `false`, the function will be executed without hashing
+/// and caching.
 ///
 /// # Example
 /// ```
