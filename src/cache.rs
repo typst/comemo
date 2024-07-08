@@ -23,6 +23,7 @@ pub fn memoized<'c, In, Out, F>(
     mut input: In,
     constraint: &'c In::Constraint,
     cache: &Cache<In::Constraint, Out>,
+    enabled: bool,
     func: F,
 ) -> Out
 where
@@ -30,6 +31,12 @@ where
     Out: Clone + 'static,
     F: FnOnce(In::Tracked<'c>) -> Out,
 {
+    // Early bypass if memoization is disabled.
+    // Hopefully the compiler will optimize this away, if the condition is constant.
+    if !enabled {
+        return memoized_disabled(input, constraint, func);
+    }
+
     // Compute the hash of the input's key part.
     let key = {
         let mut state = SipHasher13::new();
@@ -67,6 +74,30 @@ where
     let mut borrow = cache.0.write();
     borrow.insert::<In>(key, constraint.take(), output.clone());
 
+    #[cfg(feature = "testing")]
+    LAST_WAS_HIT.with(|cell| cell.set(false));
+
+    output
+}
+
+fn memoized_disabled<'c, In, Out, F>(
+    input: In,
+    constraint: &'c In::Constraint,
+    func: F,
+) -> Out
+where
+    In: Input + 'c,
+    Out: Clone + 'static,
+    F: FnOnce(In::Tracked<'c>) -> Out,
+{
+    // Execute the function with the new constraints hooked in.
+    let (input, outer) = input.retrack(constraint);
+    let output = func(input);
+
+    // Add the new constraints to the outer ones.
+    outer.join(constraint);
+
+    // Ensure that the last call was a miss during testing.
     #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
 

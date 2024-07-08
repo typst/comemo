@@ -73,22 +73,21 @@ fn test_basic() {
     test!(hit: sum_iter(1000), 499500);
 }
 
+#[memoize]
+fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
+    script
+        .split('+')
+        .map(str::trim)
+        .map(|part| match part.strip_prefix("eval ") {
+            Some(path) => evaluate(&files.read(path), files),
+            None => part.parse::<i32>().unwrap(),
+        })
+        .sum()
+}
 /// Test the calc language.
 #[test]
 #[serial]
 fn test_calc() {
-    #[memoize]
-    fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
-        script
-            .split('+')
-            .map(str::trim)
-            .map(|part| match part.strip_prefix("eval ") {
-                Some(path) => evaluate(&files.read(path), files),
-                None => part.parse::<i32>().unwrap(),
-            })
-            .sum()
-    }
-
     let mut files = Files(HashMap::new());
     files.write("alpha.calc", "2 + eval beta.calc");
     files.write("beta.calc", "2 + 3");
@@ -451,4 +450,20 @@ impl Impure {
         static VAL: AtomicU32 = AtomicU32::new(0);
         VAL.fetch_add(1, Ordering::SeqCst)
     }
+}
+
+#[test]
+#[serial]
+#[cfg(debug_assertions)]
+fn test_with_disabled() {
+    #[comemo::memoize(enabled = size >= 1000)]
+    fn disabled(size: usize) -> usize {
+        size
+    }
+
+    test!(miss: disabled(0), 0);
+    test!(miss: disabled(0), 0);
+
+    test!(miss: disabled(2000), 2000);
+    test!(hit: disabled(2000), 2000);
 }
