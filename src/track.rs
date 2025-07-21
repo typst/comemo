@@ -12,7 +12,7 @@ use crate::constraint::Join;
 pub trait Track: Validate + Surfaces {
     /// Start tracking all accesses to a value.
     #[inline]
-    fn track(&self) -> Tracked<Self> {
+    fn track(&self) -> Tracked<'_, Self> {
         Tracked {
             value: self,
             constraint: None,
@@ -22,7 +22,7 @@ pub trait Track: Validate + Surfaces {
 
     /// Start tracking all accesses and mutations to a value.
     #[inline]
-    fn track_mut(&mut self) -> TrackedMut<Self> {
+    fn track_mut(&mut self) -> TrackedMut<'_, Self> {
         TrackedMut { value: self, constraint: None }
     }
 
@@ -293,7 +293,7 @@ where
 
 /// Destructure a `Tracked<_>` into its parts.
 #[inline]
-pub fn to_parts_ref<T>(tracked: Tracked<T>) -> (&T, Option<&T::Constraint>)
+pub fn to_parts_ref<T>(tracked: Tracked<'_, T>) -> (&T, Option<&T::Constraint>)
 where
     T: Track + ?Sized,
 {

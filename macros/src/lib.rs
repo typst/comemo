@@ -18,7 +18,7 @@ use proc_macro::TokenStream as BoundaryStream;
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{parse_quote, Error, Result};
+use syn::{Error, Result, parse_quote};
 
 /// Memoize a function.
 ///

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use comemo::{memoize, track, Track, Tracked};
+use comemo::{Track, Tracked, memoize, track};
 
 fn main() {
     // Create some scripts in the calc language. This language supports addition

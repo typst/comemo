@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 
-use comemo::{evict, memoize, track, Track, Tracked, TrackedMut, Validate};
+use comemo::{Track, Tracked, TrackedMut, Validate, evict, memoize, track};
 use serial_test::serial;
 
 macro_rules! test {
@@ -39,11 +39,7 @@ fn test_basic() {
 
     #[memoize]
     fn fib(n: u32) -> u32 {
-        if n <= 2 {
-            1
-        } else {
-            fib(n - 1) + fib(n - 2)
-        }
+        if n <= 2 { 1 } else { fib(n - 1) + fib(n - 2) }
     }
 
     #[memoize]
@@ -213,11 +209,7 @@ fn test_kinds() {
 
     #[memoize]
     fn unconditional(tester: Tracky) -> &'static str {
-        if tester.by_value(Heavy("HEAVY".into())) > 10 {
-            "Long"
-        } else {
-            "Short"
-        }
+        if tester.by_value(Heavy("HEAVY".into())) > 10 { "Long" } else { "Short" }
     }
 
     let mut tester = Tester { data: "Hi".to_string() };
@@ -264,11 +256,7 @@ impl Tester {
 
     /// Return value can borrow from both.
     fn double_ref<'a>(&'a self, name: &'a str) -> &'a str {
-        if name.len() > self.data.len() {
-            name
-        } else {
-            &self.data
-        }
+        if name.len() > self.data.len() { name } else { &self.data }
     }
 
     /// Normal method with owned argument.
@@ -371,39 +359,39 @@ impl<'a> Chain<'a> {
 #[track]
 impl<'a> Chain<'a> {
     fn contains(&self, value: u32) -> bool {
-        self.value == value || self.outer.map_or(false, |outer| outer.contains(value))
+        self.value == value || self.outer.is_some_and(|outer| outer.contains(value))
     }
 }
 
 /// Test mutable tracking.
-    #[test]
-    #[serial]
-    #[rustfmt::skip]
-    fn test_mutable() {
-        #[comemo::memoize]
-        fn dump(mut sink: TrackedMut<Emitter>) {
-            sink.emit("a");
-            sink.emit("b");
-            let c = sink.len_or_ten().to_string();
-            sink.emit(&c);
-        }
-
-        let mut emitter = Emitter(vec![]);
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(miss: dump(emitter.track_mut()), ());
-        test!(hit: dump(emitter.track_mut()), ());
-        test!(hit: dump(emitter.track_mut()), ());
-        assert_eq!(emitter.0, [
-            "a", "b", "2",
-            "a", "b", "5",
-            "a", "b", "8",
-            "a", "b", "10",
-            "a", "b", "10",
-            "a", "b", "10",
-        ])
+#[test]
+#[serial]
+#[rustfmt::skip]
+fn test_mutable() {
+    #[comemo::memoize]
+    fn dump(mut sink: TrackedMut<Emitter>) {
+        sink.emit("a");
+        sink.emit("b");
+        let c = sink.len_or_ten().to_string();
+        sink.emit(&c);
     }
+
+    let mut emitter = Emitter(vec![]);
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    test!(hit: dump(emitter.track_mut()), ());
+    assert_eq!(emitter.0, [
+        "a", "b", "2",
+        "a", "b", "5",
+        "a", "b", "8",
+        "a", "b", "10",
+        "a", "b", "10",
+        "a", "b", "10",
+    ])
+}
 
 /// A tracked type with a mutable and an immutable method.
 #[derive(Clone)]
