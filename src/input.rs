@@ -45,7 +45,10 @@ pub trait Input {
 impl<T: Hash> Input for T {
     // No constraint for hashed inputs.
     type Constraint = ();
-    type Tracked<'r> = Self where Self: 'r;
+    type Tracked<'r>
+        = Self
+    where
+        Self: 'r;
     type Outer = ();
 
     #[inline]
@@ -76,7 +79,10 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = <T as Validate>::Constraint;
-    type Tracked<'r> = Tracked<'r, T> where Self: 'r;
+    type Tracked<'r>
+        = Tracked<'r, T>
+    where
+        Self: 'r;
     type Outer = Option<&'a Self::Constraint>;
 
     #[inline]
@@ -113,7 +119,10 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = T::Constraint;
-    type Tracked<'r> = TrackedMut<'r, T> where Self: 'r;
+    type Tracked<'r>
+        = TrackedMut<'r, T>
+    where
+        Self: 'r;
     type Outer = Option<&'a Self::Constraint>;
 
     #[inline]

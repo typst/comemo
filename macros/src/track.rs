@@ -161,12 +161,11 @@ fn prepare_method(vis: syn::Visibility, sig: &syn::Signature) -> Result<Method> 
         kinds.push(kind)
     }
 
-    if let syn::ReturnType::Type(_, ty) = &sig.output {
-        if let syn::Type::Reference(syn::TypeReference { mutability, .. }) = ty.as_ref() {
-            if mutability.is_some() {
-                bail!(ty, "tracked methods cannot return mutable references");
-            }
-        }
+    if let syn::ReturnType::Type(_, ty) = &sig.output
+        && let syn::Type::Reference(syn::TypeReference { mutability, .. }) = ty.as_ref()
+        && mutability.is_some()
+    {
+        bail!(ty, "tracked methods cannot return mutable references");
     }
 
     Ok(Method {
@@ -188,15 +187,15 @@ fn create_variants(methods: &[Method]) -> TokenStream {
         quote! { __ComemoVariant::#name(..) => #mutable }
     });
 
-    let is_mutable = (!methods.is_empty())
-        .then(|| {
-            quote! {
-                match &self.0 {
-                    #(#is_mutable_variants),*
-                }
+    let is_mutable = if !methods.is_empty() {
+        quote! {
+            match &self.0 {
+                #(#is_mutable_variants),*
             }
-        })
-        .unwrap_or_else(|| quote! { false });
+        }
+    } else {
+        quote! { false}
+    };
 
     quote! {
         #[derive(Clone, PartialEq, Hash)]
