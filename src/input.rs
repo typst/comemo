@@ -88,8 +88,11 @@ where
         //     let call_hash = crate::constraint::hash(&call);
         //     return *map.entry(call_hash).or_insert_with(|| self.value.call(call));
         // }
-
-        self.value.call(call)
+        let hash = self.value.call(call.clone());
+        if let Some(sink) = self.sink {
+            sink(call, hash)
+        }
+        hash
     }
 
     #[inline]
@@ -131,7 +134,11 @@ where
 
     #[inline]
     fn call(&self, call: Self::Call) -> u128 {
-        self.value.call(call)
+        let hash = self.value.call(call.clone());
+        if let Some(sink) = self.sink {
+            sink(call, hash)
+        }
+        hash
     }
 
     #[inline]

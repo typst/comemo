@@ -28,8 +28,8 @@ impl<Q, A, T> QuestionTree<Q, A, T> {
 
 impl<Q, A, T> QuestionTree<Q, A, T>
 where
-    Q: PartialEq,
-    A: Hash + Eq,
+    Q: PartialEq + Clone,
+    A: Hash + Eq + Clone,
 {
     pub fn get(&self, mut oracle: impl FnMut(&Q) -> A) -> Option<&T> {
         let mut state = self.start?;
@@ -47,31 +47,36 @@ where
 
     pub fn insert(
         &mut self,
-        sequence: impl IntoIterator<Item = (Q, A)>,
+        mut sequence: Vec<(Q, A)>,
         value: T,
     ) -> Result<(), InsertError> {
         let mut state = self.start;
         let mut predecessor = None;
 
-        for (q, a) in sequence {
-            let qi = if state.is_none() || predecessor.is_some() {
+        for i in 0..sequence.len() {
+            let pair = if state.is_none() || predecessor.is_some() {
+                let (q, a) = sequence[i].clone();
                 let qi = self.questions.alloc(q);
                 let new = State::question(qi);
                 self.link(predecessor.take(), new);
                 state = Some(new);
-                qi
+                (qi, a)
             } else {
                 let StateKind::Question(eqi) = state.unwrap().kind() else {
                     return Err(InsertError::AlreadyExists);
                 };
                 let eq = self.questions.get(eqi).unwrap();
-                if *eq != q {
+                let Some(p) = sequence[i..].iter().position(|(q, _)| q == eq) else {
                     return Err(InsertError::WrongQuestion);
+                };
+                let p = i + p;
+                if i != p {
+                    sequence.swap(i, p);
                 }
-                eqi
+                let a = sequence[i].1.clone();
+                (eqi, a)
             };
 
-            let pair = (qi, a);
             if let Some(&next) = self.links.get(&pair) {
                 state = Some(next);
             } else {
@@ -186,9 +191,9 @@ mod tests {
     #[test]
     fn test_question_tree() {
         let mut tree = QuestionTree::<char, u128, &'static str>::new();
-        tree.insert([('a', 10), ('b', 15)], "first").unwrap();
-        tree.insert([('a', 10), ('b', 20)], "second").unwrap();
-        tree.insert([('a', 15), ('c', 15)], "third").unwrap();
+        tree.insert(vec![('a', 10), ('b', 15)], "first").unwrap();
+        tree.insert(vec![('a', 10), ('b', 20)], "second").unwrap();
+        tree.insert(vec![('a', 15), ('c', 15)], "third").unwrap();
         assert_eq!(
             tree.get(|&c| match c {
                 'a' => 10,
@@ -209,6 +214,32 @@ mod tests {
     }
 
     #[test]
+    fn test_question_tree_pull_forward() {
+        let mut tree = QuestionTree::<char, u128, &'static str>::new();
+        tree.insert(vec![('a', 10), ('b', 15)], "first").unwrap();
+        tree.insert(vec![('a', 10), ('c', 15), ('b', 20)], "second").unwrap();
+        tree.insert(vec![('a', 15), ('b', 30), ('c', 15)], "third").unwrap();
+        assert_eq!(
+            tree.get(|&c| match c {
+                'a' => 10,
+                'b' => 20,
+                'c' => 15,
+                _ => 0,
+            }),
+            Some(&"second")
+        );
+        assert_eq!(
+            tree.get(|&c| match c {
+                'a' => 15,
+                'b' => 30,
+                'c' => 15,
+                _ => 0,
+            }),
+            Some(&"third")
+        );
+    }
+
+    #[test]
     fn test_cases_manual() {
         test_cases(vec![(vec![1, 0], 17)]);
         test_cases(vec![(vec![0], 0), (vec![1], 0)])
@@ -224,7 +255,7 @@ mod tests {
         let mut kept = Vec::new();
         for case in cases.iter() {
             let &(ref numbers, value) = case;
-            match tree.insert(sequence(numbers), value) {
+            match tree.insert(sequence(numbers).collect(), value) {
                 Ok(()) => kept.push(case),
                 Err(InsertError::AlreadyExists) => {}
                 Err(error) => panic!("{error:?}"),

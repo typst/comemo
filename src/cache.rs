@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bumpalo::Bump;
 use once_cell::sync::Lazy;
@@ -75,11 +74,12 @@ where
     // Insert the result into the cache.
     let mut borrow = cache.0.write();
     let result = borrow.insert::<In>(key, list, output.clone());
+
     match result {
         Ok(()) => {}
-        Err(_) => {
+        Err(err) => {
             #[cfg(debug_assertions)]
-            panic!("comemo: cached function is non-deterministic");
+            panic!("comemo: cached function is non-deterministic ({err:?})");
         }
     }
 
@@ -164,9 +164,6 @@ pub struct CacheData<C, Out> {
 }
 
 impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
-    /// Evict all entries whose age is larger than or equal to `max_age`.
-    fn evict(&mut self, _max_age: usize) {}
-
     /// Look for a matching entry in the cache.
     fn lookup<In>(&self, key: u128, input: &In) -> Option<&Out>
     where
@@ -185,6 +182,7 @@ impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
     ) -> Result<(), InsertError>
     where
         In: Input<Call = C>,
+        C: Clone,
     {
         self.entries.entry(key).or_default().insert(constraint, output)
     }
@@ -193,40 +191,5 @@ impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
 impl<C, Out> Default for CacheData<C, Out> {
     fn default() -> Self {
         Self { entries: HashMap::new() }
-    }
-}
-
-/// A memoized result.
-struct CacheEntry<C, Out> {
-    /// The memoized function's constraint.
-    constraint: Vec<(C, u128)>,
-    /// The memoized function's output.
-    output: Out,
-    /// How many evictions have passed since the entry has been last used.
-    age: AtomicUsize,
-}
-
-impl<C, Out: 'static> CacheEntry<C, Out> {
-    /// Create a new entry.
-    fn new<In>(constraint: Vec<(In::Call, u128)>, output: Out) -> Self
-    where
-        In: Input<Call = C>,
-    {
-        Self { constraint, output, age: AtomicUsize::new(0) }
-    }
-
-    /// Return the entry's output if it is valid for the given input.
-    fn lookup<In>(&self, input: &In) -> Option<&Out>
-    where
-        In: Input<Call = C>,
-        C: Clone,
-    {
-        self.constraint
-            .iter()
-            .all(|(call, hash)| input.call(call.clone()) == *hash)
-            .then(|| {
-                self.age.store(0, Ordering::SeqCst);
-                &self.output
-            })
     }
 }
