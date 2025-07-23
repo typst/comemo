@@ -18,6 +18,35 @@ macro_rules! test {
     }};
 }
 
+#[test]
+#[serial]
+fn test_context() {
+    struct Context {
+        location: Option<u64>,
+    }
+
+    #[track]
+    impl Context {
+        fn location(&self) -> Option<u64> {
+            self.location
+        }
+    }
+
+    #[memoize]
+    fn contextual(context: Tracked<Context>) -> String {
+        if let Some(loc) = context.location() {
+            format!("Location: {loc}")
+        } else {
+            "No location".into()
+        }
+    }
+
+    for i in 0..10 {
+        let context = Context { location: Some(i) };
+        test!(miss: contextual(context.track()), format!("Location: {i}"));
+    }
+}
+
 /// Test basic memoization.
 #[test]
 #[serial]
