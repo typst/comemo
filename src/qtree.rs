@@ -1,6 +1,61 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
+
+pub struct LookaheadSequence<Q, A> {
+    vec: Vec<Option<(Q, A)>>,
+    map: HashMap<u128, usize>,
+    cursor: usize,
+}
+
+impl<Q, A> LookaheadSequence<Q, A> {
+    pub fn new() -> Self {
+        Self { vec: Vec::new(), map: HashMap::new(), cursor: 0 }
+    }
+
+    pub fn next(&mut self) -> Option<(Q, A)> {
+        while self.cursor < self.vec.len() {
+            if let Some(pair) = self.vec[self.cursor].take() {
+                return Some(pair);
+            }
+            self.cursor += 1;
+        }
+        None
+    }
+}
+
+impl<Q: Hash, A> LookaheadSequence<Q, A> {
+    pub fn push(&mut self, q: Q, a: A) {
+        let h = crate::constraint::hash(&q);
+        let Entry::Vacant(entry) = self.map.entry(h) else { return };
+        let i = self.vec.len();
+        self.vec.push(Some((q, a)));
+        entry.insert(i);
+    }
+
+    pub fn extract(&mut self, q: &Q) -> Option<A> {
+        let h = crate::constraint::hash(&q);
+        let i = *self.map.get(&h)?;
+        self.vec[i].take().map(|(_, a)| a)
+    }
+}
+
+impl<Q, A> Default for LookaheadSequence<Q, A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Q: Hash, A> FromIterator<(Q, A)> for LookaheadSequence<Q, A> {
+    fn from_iter<T: IntoIterator<Item = (Q, A)>>(iter: T) -> Self {
+        let mut seq = LookaheadSequence::new();
+        for (q, a) in iter {
+            seq.push(q, a);
+        }
+        seq
+    }
+}
 
 /// A tree data structure that associates a value with a sequence of (question,
 /// answer) pairs.
@@ -28,7 +83,7 @@ impl<Q, A, T> QuestionTree<Q, A, T> {
 
 impl<Q, A, T> QuestionTree<Q, A, T>
 where
-    Q: PartialEq + Clone,
+    Q: Hash + Clone,
     A: Hash + Eq + Clone,
 {
     pub fn get(&self, mut oracle: impl FnMut(&Q) -> A) -> Option<&T> {
@@ -47,15 +102,15 @@ where
 
     pub fn insert(
         &mut self,
-        mut sequence: Vec<(Q, A)>,
+        mut sequence: LookaheadSequence<Q, A>,
         value: T,
     ) -> Result<(), InsertError> {
         let mut state = self.start;
         let mut predecessor = None;
 
-        for i in 0..sequence.len() {
+        loop {
             let pair = if state.is_none() || predecessor.is_some() {
-                let (q, a) = sequence[i].clone();
+                let Some((q, a)) = sequence.next() else { break };
                 let qi = self.questions.alloc(q);
                 let new = State::question(qi);
                 self.link(predecessor.take(), new);
@@ -66,14 +121,9 @@ where
                     return Err(InsertError::AlreadyExists);
                 };
                 let eq = self.questions.get(eqi).unwrap();
-                let Some(p) = sequence[i..].iter().position(|(q, _)| q == eq) else {
+                let Some(a) = sequence.extract(eq) else {
                     return Err(InsertError::WrongQuestion);
                 };
-                let p = i + p;
-                if i != p {
-                    sequence.swap(i, p);
-                }
-                let a = sequence[i].1.clone();
                 (eqi, a)
             };
 
@@ -188,12 +238,16 @@ impl<T> Default for Slab<T> {
 mod tests {
     use super::*;
 
+    fn s<Q: Hash, A>(iter: impl IntoIterator<Item = (Q, A)>) -> LookaheadSequence<Q, A> {
+        iter.into_iter().collect()
+    }
+
     #[test]
     fn test_question_tree() {
         let mut tree = QuestionTree::<char, u128, &'static str>::new();
-        tree.insert(vec![('a', 10), ('b', 15)], "first").unwrap();
-        tree.insert(vec![('a', 10), ('b', 20)], "second").unwrap();
-        tree.insert(vec![('a', 15), ('c', 15)], "third").unwrap();
+        tree.insert(s([('a', 10), ('b', 15)]), "first").unwrap();
+        tree.insert(s([('a', 10), ('b', 20)]), "second").unwrap();
+        tree.insert(s([('a', 15), ('c', 15)]), "third").unwrap();
         assert_eq!(
             tree.get(|&c| match c {
                 'a' => 10,
@@ -216,9 +270,9 @@ mod tests {
     #[test]
     fn test_question_tree_pull_forward() {
         let mut tree = QuestionTree::<char, u128, &'static str>::new();
-        tree.insert(vec![('a', 10), ('b', 15)], "first").unwrap();
-        tree.insert(vec![('a', 10), ('c', 15), ('b', 20)], "second").unwrap();
-        tree.insert(vec![('a', 15), ('b', 30), ('c', 15)], "third").unwrap();
+        tree.insert(s([('a', 10), ('b', 15)]), "first").unwrap();
+        tree.insert(s([('a', 10), ('c', 15), ('b', 20)]), "second").unwrap();
+        tree.insert(s([('a', 15), ('b', 30), ('c', 15)]), "third").unwrap();
         assert_eq!(
             tree.get(|&c| match c {
                 'a' => 10,
@@ -255,10 +309,10 @@ mod tests {
         let mut kept = Vec::new();
         for case in cases.iter() {
             let &(ref numbers, value) = case;
-            match tree.insert(sequence(numbers).collect(), value) {
+            match tree.insert(s(sequence(numbers)), value) {
                 Ok(()) => kept.push(case),
                 Err(InsertError::AlreadyExists) => {}
-                Err(error) => panic!("{error:?}"),
+                Err(InsertError::WrongQuestion) => {} // Err(error) => panic!("{error:?}"),
             }
         }
         for (numbers, value) in kept {

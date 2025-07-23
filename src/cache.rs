@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 
 use bumpalo::Bump;
 use once_cell::sync::Lazy;
@@ -7,7 +8,7 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
 use crate::input::Input;
-use crate::qtree::{InsertError, QuestionTree};
+use crate::qtree::{InsertError, LookaheadSequence, QuestionTree};
 
 /// The global list of eviction functions.
 static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
@@ -21,7 +22,7 @@ thread_local! {
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
     input: In,
-    list: &'c Mutex<Vec<(In::Call, u128)>>,
+    list: &'c Mutex<LookaheadSequence<In::Call, u128>>,
     bump: &'c Bump,
     cache: &Cache<In::Call, Out>,
     _enabled: bool,
@@ -65,9 +66,8 @@ where
     drop(borrow);
 
     // Execute the function with the new constraints hooked in.
-    let sink = |call, hash| list.lock().push((call, hash));
-    let input = input.retrack(sink, bump);
-    let output = func(input);
+    let sink = |call, hash| list.lock().push(call, hash);
+    let output = func(input.retrack(sink, bump));
 
     let list = std::mem::take(&mut *list.lock());
 
@@ -168,7 +168,7 @@ impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
     fn lookup<In>(&self, key: u128, input: &In) -> Option<&Out>
     where
         In: Input<Call = C>,
-        C: Clone,
+        C: Clone + Hash,
     {
         self.entries.get(&key)?.get(|c| input.call(c.clone()))
     }
@@ -177,12 +177,12 @@ impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
     fn insert<In>(
         &mut self,
         key: u128,
-        constraint: Vec<(In::Call, u128)>,
+        constraint: LookaheadSequence<In::Call, u128>,
         output: Out,
     ) -> Result<(), InsertError>
     where
         In: Input<Call = C>,
-        C: Clone,
+        C: Clone + Hash,
     {
         self.entries.entry(key).or_default().insert(constraint, output)
     }

@@ -82,6 +82,8 @@ For the full example see [`examples/calc.rs`][calc].
 [calc]: https://github.com/typst/comemo/blob/main/examples/calc.rs
 */
 
+#![allow(unused, clippy::type_complexity)]
+
 mod accelerate;
 mod cache;
 mod constraint;
