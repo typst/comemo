@@ -156,7 +156,7 @@ where
 
     #[inline]
     fn call_mut(&mut self, call: Self::Call) -> u128 {
-        let hash = self.value.call(call.clone());
+        let hash = self.value.call_mut(call.clone());
         if let Some(sink) = self.sink {
             sink(call, hash)
         }
@@ -211,7 +211,7 @@ macro_rules! args_input {
                 #[inline]
                 fn call_mut(&mut self, call: Self::Call) -> u128 {
                     match call {
-                        $(ArgsCall::$param($param) => (self.0).$idx.call($param)),*
+                        $(ArgsCall::$param($param) => (self.0).$idx.call_mut($param)),*
                     }
                 }
 
