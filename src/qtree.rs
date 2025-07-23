@@ -25,13 +25,28 @@ impl<Q, A> LookaheadSequence<Q, A> {
     }
 }
 
-impl<Q: Hash, A> LookaheadSequence<Q, A> {
-    pub fn push(&mut self, q: Q, a: A) {
+impl<Q: Hash, A: Hash + Eq> LookaheadSequence<Q, A> {
+    pub fn insert(&mut self, q: Q, a: A) {
         let h = crate::constraint::hash(&q);
-        let Entry::Vacant(entry) = self.map.entry(h) else { return };
-        let i = self.vec.len();
-        self.vec.push(Some((q, a)));
-        entry.insert(i);
+        match self.map.entry(h) {
+            Entry::Vacant(entry) => {
+                let i = self.vec.len();
+                self.vec.push(Some((q, a)));
+                entry.insert(i);
+            }
+            Entry::Occupied(entry) =>
+            {
+                #[cfg(debug_assertions)]
+                if let Some((_, a2)) = &self.vec[*entry.get()] {
+                    if a != *a2 {
+                        panic!(
+                            "comemo: found differing return values. \
+                             is there an impure tracked function?"
+                        )
+                    }
+                }
+            }
+        }
     }
 
     pub fn extract(&mut self, q: &Q) -> Option<A> {
@@ -47,11 +62,11 @@ impl<Q, A> Default for LookaheadSequence<Q, A> {
     }
 }
 
-impl<Q: Hash, A> FromIterator<(Q, A)> for LookaheadSequence<Q, A> {
+impl<Q: Hash, A: Hash + Eq> FromIterator<(Q, A)> for LookaheadSequence<Q, A> {
     fn from_iter<T: IntoIterator<Item = (Q, A)>>(iter: T) -> Self {
         let mut seq = LookaheadSequence::new();
         for (q, a) in iter {
-            seq.push(q, a);
+            seq.insert(q, a);
         }
         seq
     }
@@ -238,7 +253,9 @@ impl<T> Default for Slab<T> {
 mod tests {
     use super::*;
 
-    fn s<Q: Hash, A>(iter: impl IntoIterator<Item = (Q, A)>) -> LookaheadSequence<Q, A> {
+    fn s<Q: Hash, A: Hash + Eq>(
+        iter: impl IntoIterator<Item = (Q, A)>,
+    ) -> LookaheadSequence<Q, A> {
         iter.into_iter().collect()
     }
 

@@ -79,7 +79,7 @@ where
         if call.is_mutable() {
             list.lock().mutable.push(call)
         } else {
-            list.lock().immutable.push(call, hash)
+            list.lock().immutable.insert(call, hash);
         }
     };
     let output = func(input.retrack(sink, bump));

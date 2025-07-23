@@ -537,7 +537,7 @@ struct Heavy(String);
 #[serial]
 #[cfg(debug_assertions)]
 #[should_panic(
-    expected = "comemo: found conflicting constraints. is this tracked function pure?"
+    expected = "comemo: found differing return values. is there an impure tracked function?"
 )]
 fn test_impure_tracked_method() {
     #[comemo::memoize]
