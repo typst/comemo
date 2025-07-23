@@ -50,8 +50,6 @@ pub trait Track: Validate + Surfaces {
 ///
 /// This trait is implemented by the `#[track]` macro alongside [`Track`].
 pub trait Validate {
-    /// The constraints for this type.
-    type Constraint: Default + Clone + Join + 'static;
     type Call: Clone + Send + Sync;
 
     /// Performs a call on the value and returns the hash of its results.

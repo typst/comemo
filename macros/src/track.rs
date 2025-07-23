@@ -245,12 +245,8 @@ fn create(
     impl_params_t.params.push(t.clone());
     type_params_t.params.push(t.clone());
 
-    // Prepare validations.
     let prefix = trait_.as_ref().map(|name| quote! { #name for });
     let calls: Vec<_> = methods.iter().map(create_call).collect();
-
-    // Prepare replying.
-    let immutable = methods.iter().all(|m| !m.mutable);
 
     // Prepare variants and wrapper methods.
     let wrapper_methods = methods
@@ -259,17 +255,10 @@ fn create(
         .map(|m| create_wrapper(m, false));
     let wrapper_methods_mut = methods.iter().map(|m| create_wrapper(m, true));
 
-    let constraint = if immutable {
-        quote! { ImmutableConstraint }
-    } else {
-        quote! { MutableConstraint }
-    };
-
     Ok(quote! {
         impl #impl_params ::comemo::Track for #ty #where_clause {}
 
         impl #impl_params ::comemo::Validate for #ty #where_clause {
-            type Constraint = ::comemo::internal::#constraint<__ComemoCall>;
             type Call = __ComemoCall;
 
             #[inline]

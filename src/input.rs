@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use bumpalo::Bump;
 
 use crate::constraint::Join;
-use crate::track::{Track, Tracked, TrackedMut, Validate};
+use crate::track::{Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
 #[inline]
@@ -14,18 +14,12 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
 pub trait Input {
-    /// The constraints for this input.
-    type Constraint: Default + Clone + Join + 'static;
-
     type Call: Clone + Send + Sync;
 
     /// The input with new constraints hooked in.
     type Tracked<'r>
     where
         Self: 'r;
-
-    /// The extracted outer constraints.
-    type Outer: Join<Self::Constraint>;
 
     /// Hash the key parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
@@ -45,13 +39,11 @@ pub trait Input {
 
 impl<T: Hash> Input for T {
     // No constraint for hashed inputs.
-    type Constraint = ();
     type Call = ();
     type Tracked<'r>
         = Self
     where
         Self: 'r;
-    type Outer = ();
 
     #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
@@ -81,13 +73,11 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = <T as Validate>::Constraint;
     type Call = T::Call;
     type Tracked<'r>
         = Tracked<'r, T>
     where
         Self: 'r;
-    type Outer = Option<&'a Self::Constraint>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -125,13 +115,11 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = T::Constraint;
     type Call = T::Call;
     type Tracked<'r>
         = TrackedMut<'r, T>
     where
         Self: 'r;
-    type Outer = Option<&'a Self::Constraint>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -171,10 +159,8 @@ macro_rules! args_input {
         const _: () = {
             #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
             impl<$($param: Input),*> Input for Args<($($param,)*)> {
-                type Constraint = ($($param::Constraint,)*);
                 type Call = Call<$($param::Call),*>;
                 type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
-                type Outer = ($($param::Outer,)*);
 
                 #[inline]
                 fn key<T: Hasher>(&self, state: &mut T) {
