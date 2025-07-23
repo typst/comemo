@@ -2,7 +2,6 @@ use std::hash::{Hash, Hasher};
 
 use bumpalo::Bump;
 
-use crate::constraint::Join;
 use crate::track::{Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
@@ -14,7 +13,7 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
 pub trait Input {
-    type Call: Clone + Send + Sync;
+    type Call: Clone + Hash + Send + Sync;
 
     /// The input with new constraints hooked in.
     type Tracked<'r>
@@ -84,6 +83,12 @@ where
 
     #[inline]
     fn call(&self, call: Self::Call) -> u128 {
+        // if let Some(accelerator) = crate::accelerate::get(self.id) {
+        //     let mut map = accelerator.lock();
+        //     let call_hash = crate::constraint::hash(&call);
+        //     return *map.entry(call_hash).or_insert_with(|| self.value.call(call));
+        // }
+
         self.value.call(call)
     }
 
@@ -191,20 +196,7 @@ macro_rules! args_input {
                 }
             }
 
-            #[allow(unused_variables, clippy::unused_unit)]
-            impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
-                #[inline]
-                fn join(&self, constraint: &($($alt,)*)) {
-                    $(self.$idx.join(&constraint.$idx);)*
-                }
-
-                #[inline]
-                fn take(&self) -> Self {
-                    ($(self.$idx.take(),)*)
-                }
-            }
-
-            #[derive(Clone)]
+            #[derive(Clone, Hash)]
             pub enum Call<$($param),*> {
                 $($param($param),)*
             }

@@ -1,8 +1,8 @@
 use std::fmt::{self, Debug, Formatter};
+use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 
 use crate::accelerate;
-use crate::constraint::Join;
 
 /// A trackable type.
 ///
@@ -50,7 +50,7 @@ pub trait Track: Validate + Surfaces {
 ///
 /// This trait is implemented by the `#[track]` macro alongside [`Track`].
 pub trait Validate {
-    type Call: Clone + Send + Sync;
+    type Call: Clone + Hash + Send + Sync;
 
     /// Performs a call on the value and returns the hash of its results.
     fn call(&self, call: Self::Call) -> u128;

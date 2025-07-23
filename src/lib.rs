@@ -102,7 +102,7 @@ pub mod internal {
     pub use parking_lot::RwLock;
 
     pub use crate::cache::{Cache, CacheData, memoized, register_evictor};
-    pub use crate::constraint::{Call, ImmutableConstraint, MutableConstraint, hash};
+    pub use crate::constraint::{Call, hash};
     pub use crate::input::{Args, Input, assert_hashable_or_trackable};
     pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
 
