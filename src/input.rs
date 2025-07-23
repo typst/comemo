@@ -2,6 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use bumpalo::Bump;
 
+use crate::constraint::Call;
 use crate::track::{Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
@@ -13,7 +14,7 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
 pub trait Input {
-    type Call: PartialEq + Clone + Hash + Send + Sync;
+    type Call: Call;
 
     /// The input with new constraints hooked in.
     type Tracked<'r>
@@ -168,10 +169,10 @@ pub struct Args<T>(pub T);
 
 macro_rules! args_input {
     ($($param:tt $alt:tt $idx:tt),*) => {
+        #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
         const _: () = {
-            #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
             impl<$($param: Input),*> Input for Args<($($param,)*)> {
-                type Call = Call<$($param::Call),*>;
+                type Call = ArgsCall<$($param::Call),*>;
                 type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
 
                 #[inline]
@@ -182,7 +183,7 @@ macro_rules! args_input {
                 #[inline]
                 fn call(&self, call: Self::Call) -> u128 {
                     match call {
-                        $(Call::$param($param) => (self.0).$idx.call($param)),*
+                        $(ArgsCall::$param($param) => (self.0).$idx.call($param)),*
                     }
                 }
 
@@ -196,7 +197,7 @@ macro_rules! args_input {
                     Self: 'r,
                 {
                     $(let $param = (self.0).$idx.retrack(
-                        move |call, hash| sink(Call::$param(call), hash),
+                        move |call, hash| sink(ArgsCall::$param(call), hash),
                         bump,
                     );)*
                     ($($param,)*)
@@ -204,8 +205,16 @@ macro_rules! args_input {
             }
 
             #[derive(PartialEq, Clone, Hash)]
-            pub enum Call<$($param),*> {
+            pub enum ArgsCall<$($param),*> {
                 $($param($param),)*
+            }
+
+            impl<$($param: Call),*> Call for ArgsCall<$($param),*> {
+                fn is_mutable(&self) -> bool {
+                    match *self {
+                        $(Self::$param(ref $param) => $param.is_mutable(),)*
+                    }
+                }
             }
         };
     };

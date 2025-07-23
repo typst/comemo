@@ -8,6 +8,12 @@ pub trait Call: Hash + PartialEq + Clone + Send + Sync {
     fn is_mutable(&self) -> bool;
 }
 
+impl Call for () {
+    fn is_mutable(&self) -> bool {
+        false
+    }
+}
+
 /// Produce a 128-bit hash of a value.
 #[inline]
 pub fn hash<T: Hash>(value: &T) -> u128 {

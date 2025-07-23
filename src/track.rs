@@ -3,6 +3,7 @@ use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 
 use crate::accelerate;
+use crate::constraint::Call;
 
 /// A trackable type.
 ///
@@ -50,7 +51,7 @@ pub trait Track: Validate + Surfaces {
 ///
 /// This trait is implemented by the `#[track]` macro alongside [`Track`].
 pub trait Validate {
-    type Call: PartialEq + Clone + Hash + Send + Sync;
+    type Call: Call;
 
     /// Performs a call on the value and returns the hash of its results.
     fn call(&self, call: Self::Call) -> u128;
