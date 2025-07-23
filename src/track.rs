@@ -50,7 +50,7 @@ pub trait Track: Validate + Surfaces {
 ///
 /// This trait is implemented by the `#[track]` macro alongside [`Track`].
 pub trait Validate {
-    type Call: Clone + Hash + Send + Sync;
+    type Call: PartialEq + Clone + Hash + Send + Sync;
 
     /// Performs a call on the value and returns the hash of its results.
     fn call(&self, call: Self::Call) -> u128;

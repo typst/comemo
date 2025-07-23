@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
 
 use comemo::{Track, Tracked, TrackedMut, Validate, evict, memoize, track};
 use serial_test::serial;
@@ -20,30 +21,82 @@ macro_rules! test {
 
 #[test]
 #[serial]
+fn test_non_deterministic() {
+    use std::sync::atomic::Ordering::SeqCst;
+
+    static FOO: AtomicUsize = AtomicUsize::new(0);
+
+    #[memoize]
+    fn contextual(context: Tracked<Context>) -> String {
+        if FOO.load(SeqCst) == 0 {
+            let _ = context.location();
+        } else {
+            let _ = context.styles();
+        }
+        String::new()
+    }
+
+    let context = Context { location: Some(0), styles: "styles" };
+    FOO.store(0, SeqCst);
+    contextual(context.track());
+
+    let context = Context { location: Some(1), styles: "styles" };
+    FOO.store(1, SeqCst);
+    contextual(context.track());
+}
+
+#[test]
+#[serial]
 fn test_context() {
     #[memoize]
     fn contextual(context: Tracked<Context>) -> String {
         if let Some(loc) = context.location() {
-            format!("Location: {loc}")
+            if loc == 5 {
+                format!("Twenty has {}", context.styles())
+            } else {
+                format!("Location: {loc}")
+            }
+        } else {
+            "No location".into()
+        }
+    }
+
+    fn oracle(context: &Context) -> String {
+        if let Some(loc) = context.location {
+            if loc == 5 {
+                format!("Twenty has {}", context.styles)
+            } else {
+                format!("Location: {loc}")
+            }
         } else {
             "No location".into()
         }
     }
 
     for i in 0..10 {
-        let context = Context { location: Some(i) };
-        test!(miss: contextual(context.track()), format!("Location: {i}"));
+        let context = Context { location: Some(i), styles: "styles" };
+        test!(miss: contextual(context.track()), oracle(&context));
+    }
+
+    for i in 0..10 {
+        let context = Context { location: Some(i), styles: "styles" };
+        test!(hit: contextual(context.track()), oracle(&context));
     }
 }
 
 struct Context {
     location: Option<u64>,
+    styles: &'static str,
 }
 
 #[track]
 impl Context {
     fn location(&self) -> Option<u64> {
         self.location
+    }
+
+    fn styles(&self) -> &'static str {
+        self.styles
     }
 }
 

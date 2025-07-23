@@ -13,7 +13,7 @@ pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
 pub trait Input {
-    type Call: Clone + Hash + Send + Sync;
+    type Call: PartialEq + Clone + Hash + Send + Sync;
 
     /// The input with new constraints hooked in.
     type Tracked<'r>
@@ -196,7 +196,7 @@ macro_rules! args_input {
                 }
             }
 
-            #[derive(Clone, Hash)]
+            #[derive(PartialEq, Clone, Hash)]
             pub enum Call<$($param),*> {
                 $($param($param),)*
             }

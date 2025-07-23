@@ -8,6 +8,7 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
 use crate::input::Input;
+use crate::qtree::{InsertError, QuestionTree};
 
 /// The global list of eviction functions.
 static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
@@ -73,7 +74,9 @@ where
 
     // Insert the result into the cache.
     let mut borrow = cache.0.write();
-    borrow.insert::<In>(key, list, output.clone());
+    borrow
+        .insert::<In>(key, list, output.clone())
+        .expect("comemo: cached function is non deterministic");
 
     #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
@@ -144,29 +147,20 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
     }
 
     /// Evict all entries whose age is larger than or equal to `max_age`.
-    pub fn evict(&self, max_age: usize) {
-        self.0.write().evict(max_age)
+    pub fn evict(&self, _max_age: usize) {
+        // self.0.write().evict(max_age)
     }
 }
 
 /// The internal data for a cache.
 pub struct CacheData<C, Out> {
     /// Maps from hashes to memoized results.
-    entries: HashMap<u128, Vec<CacheEntry<C, Out>>>,
+    entries: HashMap<u128, QuestionTree<C, u128, Out>>,
 }
 
-impl<C, Out: 'static> CacheData<C, Out> {
+impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
     /// Evict all entries whose age is larger than or equal to `max_age`.
-    fn evict(&mut self, max_age: usize) {
-        self.entries.retain(|_, entries| {
-            entries.retain_mut(|entry| {
-                let age = entry.age.get_mut();
-                *age += 1;
-                *age <= max_age
-            });
-            !entries.is_empty()
-        });
-    }
+    fn evict(&mut self, _max_age: usize) {}
 
     /// Look for a matching entry in the cache.
     fn lookup<In>(&self, key: u128, input: &In) -> Option<&Out>
@@ -174,22 +168,20 @@ impl<C, Out: 'static> CacheData<C, Out> {
         In: Input<Call = C>,
         C: Clone,
     {
-        self.entries
-            .get(&key)?
-            .iter()
-            .rev()
-            .find_map(|entry| entry.lookup::<In>(input))
+        self.entries.get(&key)?.get(|c| input.call(c.clone()))
     }
 
     /// Insert an entry into the cache.
-    fn insert<In>(&mut self, key: u128, constraint: Vec<(In::Call, u128)>, output: Out)
+    fn insert<In>(
+        &mut self,
+        key: u128,
+        constraint: Vec<(In::Call, u128)>,
+        output: Out,
+    ) -> Result<(), InsertError>
     where
         In: Input<Call = C>,
     {
-        self.entries
-            .entry(key)
-            .or_default()
-            .push(CacheEntry::new::<In>(constraint, output));
+        self.entries.entry(key).or_default().insert(constraint, output)
     }
 }
 
