@@ -95,7 +95,10 @@ where
     // Insert the result into the cache.
     match cache.0.write().insert::<In>(key, list, output.clone()) {
         Ok(()) => {}
-        Err(InsertError::AlreadyExists) => {}
+        Err(InsertError::AlreadyExists) => {
+            // A concurrent call with the same arguments can have inserted
+            // a result in the meantime.
+        }
         Err(InsertError::WrongQuestion) => {
             #[cfg(debug_assertions)]
             panic!("comemo: cached function is non-deterministic");
