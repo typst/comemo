@@ -87,6 +87,7 @@ mod cache;
 mod constraint;
 mod input;
 mod prehashed;
+mod qtree;
 mod track;
 
 pub use crate::cache::evict;
