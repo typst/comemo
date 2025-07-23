@@ -74,9 +74,14 @@ where
 
     // Insert the result into the cache.
     let mut borrow = cache.0.write();
-    borrow
-        .insert::<In>(key, list, output.clone())
-        .expect("comemo: cached function is non deterministic");
+    let result = borrow.insert::<In>(key, list, output.clone());
+    match result {
+        Ok(()) => {}
+        Err(_) => {
+            #[cfg(debug_assertions)]
+            panic!("comemo: cached function is non-deterministic");
+        }
+    }
 
     #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
