@@ -419,10 +419,10 @@ fn create_wrapper(method: &Method, tracked_mut: bool) -> TokenStream {
         #[inline]
         #vis #sig {
             let __comemo_variant = __ComemoVariant::#name(#(#args.to_owned()),*);
-            let (__comemo_value, __comemo_constraint) = ::comemo::internal::#to_parts;
+            let (__comemo_value, __comemo_sink) = ::comemo::internal::#to_parts;
             let output = __comemo_value.#name(#(#args,)*);
-            if let Some(constraint) = __comemo_constraint {
-                constraint.push(
+            if let Some(__comemo_sink) = __comemo_sink {
+                __comemo_sink(
                     __ComemoCall(__comemo_variant),
                     ::comemo::internal::hash(&output),
                 );

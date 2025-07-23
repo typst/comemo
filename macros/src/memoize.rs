@@ -160,6 +160,7 @@ fn process(function: &Function) -> Result<TokenStream> {
         ::comemo::internal::memoized(
             ::comemo::internal::Args(#arg_tuple),
             &::core::default::Default::default(),
+            &::core::default::Default::default(),
             &__CACHE,
             #enabled,
             #closure,

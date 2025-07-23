@@ -1,5 +1,7 @@
 use std::hash::{Hash, Hasher};
 
+use bumpalo::Bump;
+
 use crate::constraint::Join;
 use crate::track::{Track, Tracked, TrackedMut, Validate};
 
@@ -38,8 +40,9 @@ pub trait Input {
     /// return the result alongside the outer constraints.
     fn retrack<'r>(
         self,
-        constraint: &'r Self::Constraint,
-    ) -> (Self::Tracked<'r>, Self::Outer)
+        sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        b: &'r Bump,
+    ) -> Self::Tracked<'r>
     where
         Self: 'r;
 }
@@ -68,11 +71,15 @@ impl<T: Hash> Input for T {
     fn replay(&mut self, _: &Self::Constraint) {}
 
     #[inline]
-    fn retrack<'r>(self, _: &'r ()) -> (Self::Tracked<'r>, Self::Outer)
+    fn retrack<'r>(
+        self,
+        _: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        _: &'r Bump,
+    ) -> Self::Tracked<'r>
     where
         Self: 'r,
     {
-        (self, ())
+        self
     }
 }
 
@@ -103,17 +110,23 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        constraint: &'r Self::Constraint,
-    ) -> (Self::Tracked<'r>, Self::Outer)
+        sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        b: &'r Bump,
+    ) -> Self::Tracked<'r>
     where
         Self: 'r,
     {
-        let tracked = Tracked {
+        let prev = self.sink;
+        Tracked {
             value: self.value,
-            constraint: Some(constraint),
             id: self.id,
-        };
-        (tracked, self.constraint)
+            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
+                sink(c.clone(), hash);
+                if let Some(prev) = prev {
+                    prev(c, hash);
+                }
+            })),
+        }
     }
 }
 
@@ -146,13 +159,22 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        constraint: &'r Self::Constraint,
-    ) -> (Self::Tracked<'r>, Self::Outer)
+        sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        b: &'r Bump,
+    ) -> Self::Tracked<'r>
     where
         Self: 'r,
     {
-        let tracked = TrackedMut { value: self.value, constraint: Some(constraint) };
-        (tracked, self.constraint)
+        let prev = self.sink;
+        TrackedMut {
+            value: self.value,
+            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
+                sink(c.clone(), hash);
+                if let Some(prev) = prev {
+                    prev(c, hash);
+                }
+            })),
+        }
     }
 }
 
@@ -162,10 +184,10 @@ pub struct Args<T>(pub T);
 macro_rules! args_input {
     ($($param:tt $alt:tt $idx:tt),*) => {
         const _: () = {
-            #[allow(unused_variables, non_snake_case)]
+            #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
             impl<$($param: Input),*> Input for Args<($($param,)*)> {
                 type Constraint = ($($param::Constraint,)*);
-                type Question = Question<$($param),*>;
+                type Question = Question<$($param::Question),*>;
                 type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
                 type Outer = ($($param::Outer,)*);
 
@@ -187,13 +209,17 @@ macro_rules! args_input {
                 #[inline]
                 fn retrack<'r>(
                     self,
-                    constraint: &'r Self::Constraint,
-                ) -> (Self::Tracked<'r>, Self::Outer)
+                    sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+                    bump: &'r Bump,
+                ) -> Self::Tracked<'r>
                 where
                     Self: 'r,
                 {
-                    $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
-                    (($($param.0,)*), ($($param.1,)*))
+                    $(let $param = (self.0).$idx.retrack(
+                        move |call, hash| sink(Question::$param(call), hash),
+                        bump,
+                    );)*
+                    ($($param,)*)
                 }
             }
 

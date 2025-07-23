@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use bumpalo::Bump;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use siphasher::sip128::{Hasher128, SipHasher13};
@@ -8,7 +9,6 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 use crate::accelerate;
 use crate::constraint::Join;
 use crate::input::Input;
-use crate::qtree::QuestionTree;
 
 /// The global list of eviction functions.
 static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
@@ -23,8 +23,9 @@ thread_local! {
 pub fn memoized<'c, In, Out, F>(
     mut input: In,
     constraint: &'c In::Constraint,
+    bump: &'c Bump,
     cache: &Cache<In::Constraint, Out>,
-    enabled: bool,
+    _enabled: bool,
     func: F,
 ) -> Out
 where
@@ -34,9 +35,9 @@ where
 {
     // Early bypass if memoization is disabled.
     // Hopefully the compiler will optimize this away, if the condition is constant.
-    if !enabled {
-        return memoized_disabled(input, constraint, func);
-    }
+    // if !enabled {
+    //     return memoized_disabled(input, constraint, func);
+    // }
 
     // Compute the hash of the input's key part.
     let key = {
@@ -52,7 +53,8 @@ where
         input.replay(constrained);
 
         // Add the cached constraints to the outer ones.
-        input.retrack(constraint).1.join(constrained);
+        // Oof.
+        // input.retrack(constraint, &bump).1.join(constrained);
 
         #[cfg(feature = "testing")]
         LAST_WAS_HIT.with(|cell| cell.set(true));
@@ -65,11 +67,9 @@ where
     drop(borrow);
 
     // Execute the function with the new constraints hooked in.
-    let (input, outer) = input.retrack(constraint);
+    let sink = |_, _| {};
+    let input = input.retrack(sink, bump);
     let output = func(input);
-
-    // Add the new constraints to the outer ones.
-    outer.join(constraint);
 
     // Insert the result into the cache.
     let mut borrow = cache.0.write();
@@ -81,29 +81,29 @@ where
     output
 }
 
-fn memoized_disabled<'c, In, Out, F>(
-    input: In,
-    constraint: &'c In::Constraint,
-    func: F,
-) -> Out
-where
-    In: Input + 'c,
-    Out: Clone + 'static,
-    F: FnOnce(In::Tracked<'c>) -> Out,
-{
-    // Execute the function with the new constraints hooked in.
-    let (input, outer) = input.retrack(constraint);
-    let output = func(input);
+// fn memoized_disabled<'c, In, Out, F>(
+//     input: In,
+//     constraint: &'c In::Constraint,
+//     func: F,
+// ) -> Out
+// where
+//     In: Input + 'c,
+//     Out: Clone + 'static,
+//     F: FnOnce(In::Tracked<'c>) -> Out,
+// {
+//     // Execute the function with the new constraints hooked in.
+//     let (input, outer) = input.retrack(constraint);
+//     let output = func(input);
 
-    // Add the new constraints to the outer ones.
-    outer.join(constraint);
+//     // Add the new constraints to the outer ones.
+//     outer.join(constraint);
 
-    // Ensure that the last call was a miss during testing.
-    #[cfg(feature = "testing")]
-    LAST_WAS_HIT.with(|cell| cell.set(false));
+//     // Ensure that the last call was a miss during testing.
+//     #[cfg(feature = "testing")]
+//     LAST_WAS_HIT.with(|cell| cell.set(false));
 
-    output
-}
+//     output
+// }
 
 /// Evict the global cache.
 ///

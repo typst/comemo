@@ -369,7 +369,7 @@ fn test_variance() {
 struct Chain<'a> {
     // Need to override the lifetime here so that a `Tracked` is covariant over
     // `Chain`.
-    outer: Option<Tracked<'a, Self, <Chain<'static> as Validate>::Constraint>>,
+    outer: Option<Tracked<'a, Self, <Chain<'static> as Validate>::Call>>,
     value: u32,
 }
 
