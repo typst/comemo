@@ -50,7 +50,7 @@ where
 {
     // Early bypass if memoization is disabled.
     // Hopefully the compiler will optimize this away, if the condition is constant.
-    if !enabled {
+    if true {
         // Execute the function with the new constraints hooked in.
         let output = func(input.retrack_noop());
 
