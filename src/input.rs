@@ -37,6 +37,10 @@ pub trait Input {
     ) -> Self::Tracked<'r>
     where
         Self: 'r;
+
+    fn retrack_noop<'r>(self) -> Self::Tracked<'r>
+    where
+        Self: 'r;
 }
 
 impl<T: Hash> Input for T {
@@ -68,6 +72,13 @@ impl<T: Hash> Input for T {
         _: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
         _: &'r Bump,
     ) -> Self::Tracked<'r>
+    where
+        Self: 'r,
+    {
+        self
+    }
+
+    fn retrack_noop<'r>(self) -> Self::Tracked<'r>
     where
         Self: 'r,
     {
@@ -129,6 +140,13 @@ where
             })),
         }
     }
+
+    fn retrack_noop<'r>(self) -> Self::Tracked<'r>
+    where
+        Self: 'r,
+    {
+        self
+    }
 }
 
 impl<'a, T> Input for TrackedMut<'a, T>
@@ -183,6 +201,13 @@ where
             })),
         }
     }
+
+    fn retrack_noop<'r>(self) -> Self::Tracked<'r>
+    where
+        Self: 'r,
+    {
+        self
+    }
 }
 
 /// Wrapper for multiple inputs.
@@ -228,6 +253,14 @@ macro_rules! args_input {
                         move |call, hash| sink(ArgsCall::$param(call), hash),
                         bump,
                     );)*
+                    ($($param,)*)
+                }
+
+                fn retrack_noop<'r>(self) -> Self::Tracked<'r>
+                where
+                    Self: 'r,
+                {
+                    $(let $param = (self.0).$idx.retrack_noop();)*
                     ($($param,)*)
                 }
             }

@@ -40,7 +40,7 @@ pub fn memoized<'c, In, Out, F>(
     list: &'c Mutex<Recording<In::Call>>,
     bump: &'c Bump,
     cache: &Cache<In::Call, Out>,
-    _enabled: bool,
+    enabled: bool,
     func: F,
 ) -> Out
 where
@@ -50,9 +50,16 @@ where
 {
     // Early bypass if memoization is disabled.
     // Hopefully the compiler will optimize this away, if the condition is constant.
-    // if !enabled {
-    //     return memoized_disabled(input, constraint, func);
-    // }
+    if !enabled {
+        // Execute the function with the new constraints hooked in.
+        let output = func(input.retrack_noop());
+
+        // Ensure that the last call was a miss during testing.
+        #[cfg(feature = "testing")]
+        LAST_WAS_HIT.with(|cell| cell.set(false));
+
+        return output;
+    }
 
     // Compute the hash of the input's key part.
     let key = {
@@ -100,30 +107,6 @@ where
     output
 }
 
-// fn memoized_disabled<'c, In, Out, F>(
-//     input: In,
-//     constraint: &'c In::Constraint,
-//     func: F,
-// ) -> Out
-// where
-//     In: Input + 'c,
-//     Out: Clone + 'static,
-//     F: FnOnce(In::Tracked<'c>) -> Out,
-// {
-//     // Execute the function with the new constraints hooked in.
-//     let (input, outer) = input.retrack(constraint);
-//     let output = func(input);
-
-//     // Add the new constraints to the outer ones.
-//     outer.join(constraint);
-
-//     // Ensure that the last call was a miss during testing.
-//     #[cfg(feature = "testing")]
-//     LAST_WAS_HIT.with(|cell| cell.set(false));
-
-//     output
-// }
-
 /// Evict the global cache.
 ///
 /// This removes all memoized results from the cache whose age is larger than or
@@ -164,7 +147,7 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
 
     /// Evict all entries whose age is larger than or equal to `max_age`.
     pub fn evict(&self, _max_age: usize) {
-        // self.0.write().evict(max_age)
+        // TODO
     }
 }
 
