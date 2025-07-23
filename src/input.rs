@@ -17,7 +17,7 @@ pub trait Input {
     /// The constraints for this input.
     type Constraint: Default + Clone + Join + 'static;
 
-    type Question: Clone + Send + Sync;
+    type Call: Clone + Send + Sync;
 
     /// The input with new constraints hooked in.
     type Tracked<'r>
@@ -30,7 +30,7 @@ pub trait Input {
     /// Hash the key parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
 
-    fn ask(&self, question: Self::Question) -> u128;
+    fn call(&self, call: Self::Call) -> u128;
 
     /// Validate the tracked parts of the input.
     fn validate(&self, constraint: &Self::Constraint) -> bool;
@@ -42,7 +42,7 @@ pub trait Input {
     /// return the result alongside the outer constraints.
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
         b: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -52,7 +52,7 @@ pub trait Input {
 impl<T: Hash> Input for T {
     // No constraint for hashed inputs.
     type Constraint = ();
-    type Question = ();
+    type Call = ();
     type Tracked<'r>
         = Self
     where
@@ -65,7 +65,7 @@ impl<T: Hash> Input for T {
     }
 
     #[inline]
-    fn ask(&self, _: Self::Question) -> u128 {
+    fn call(&self, _: Self::Call) -> u128 {
         0
     }
 
@@ -80,7 +80,7 @@ impl<T: Hash> Input for T {
     #[inline]
     fn retrack<'r>(
         self,
-        _: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        _: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
         _: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -96,7 +96,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = <T as Validate>::Constraint;
-    type Question = T::Call;
+    type Call = T::Call;
     type Tracked<'r>
         = Tracked<'r, T>
     where
@@ -107,8 +107,8 @@ where
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn ask(&self, question: Self::Question) -> u128 {
-        self.value.ask(question)
+    fn call(&self, call: Self::Call) -> u128 {
+        self.value.call(call)
     }
 
     #[inline]
@@ -122,7 +122,7 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
         b: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -148,7 +148,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = T::Constraint;
-    type Question = T::Call;
+    type Call = T::Call;
     type Tracked<'r>
         = TrackedMut<'r, T>
     where
@@ -159,8 +159,8 @@ where
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn ask(&self, question: Self::Question) -> u128 {
-        self.value.ask(question)
+    fn call(&self, call: Self::Call) -> u128 {
+        self.value.call(call)
     }
 
     #[inline]
@@ -176,7 +176,7 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+        sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
         b: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -204,7 +204,7 @@ macro_rules! args_input {
             #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
             impl<$($param: Input),*> Input for Args<($($param,)*)> {
                 type Constraint = ($($param::Constraint,)*);
-                type Question = Question<$($param::Question),*>;
+                type Call = Call<$($param::Call),*>;
                 type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
                 type Outer = ($($param::Outer,)*);
 
@@ -214,9 +214,9 @@ macro_rules! args_input {
                 }
 
                 #[inline]
-                fn ask(&self, question: Self::Question) -> u128 {
-                    match question {
-                        $(Question::$param($param) => (self.0).$idx.ask($param)),*
+                fn call(&self, call: Self::Call) -> u128 {
+                    match call {
+                        $(Call::$param($param) => (self.0).$idx.call($param)),*
                     }
                 }
 
@@ -233,14 +233,14 @@ macro_rules! args_input {
                 #[inline]
                 fn retrack<'r>(
                     self,
-                    sink: impl Fn(Self::Question, u128) + Copy + Send + Sync + 'r,
+                    sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
                     bump: &'r Bump,
                 ) -> Self::Tracked<'r>
                 where
                     Self: 'r,
                 {
                     $(let $param = (self.0).$idx.retrack(
-                        move |call, hash| sink(Question::$param(call), hash),
+                        move |call, hash| sink(Call::$param(call), hash),
                         bump,
                     );)*
                     ($($param,)*)
@@ -261,7 +261,7 @@ macro_rules! args_input {
             }
 
             #[derive(Clone)]
-            pub enum Question<$($param),*> {
+            pub enum Call<$($param),*> {
                 $($param($param),)*
             }
         };

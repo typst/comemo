@@ -294,7 +294,7 @@ fn create(
             }
 
             #[inline]
-            fn ask(&self, call: Self::Call) -> u128 {
+            fn call(&self, call: Self::Call) -> u128 {
                 let mut this = #maybe_cloned;
                 match call.0 { #(#validations,)* }
             }

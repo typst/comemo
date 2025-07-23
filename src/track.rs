@@ -70,7 +70,8 @@ pub trait Validate {
     /// called in between.
     fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool;
 
-    fn ask(&self, question: Self::Call) -> u128;
+    /// Performs a call on the value and returns the hash of its results.
+    fn call(&self, call: Self::Call) -> u128;
 
     /// Replay recorded mutations to the value.
     fn replay(&mut self, constraint: &Self::Constraint);

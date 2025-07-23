@@ -21,9 +21,9 @@ thread_local! {
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
     input: In,
-    list: &'c Mutex<Vec<(In::Question, u128)>>,
+    list: &'c Mutex<Vec<(In::Call, u128)>>,
     bump: &'c Bump,
-    cache: &Cache<In::Question, Out>,
+    cache: &Cache<In::Call, Out>,
     _enabled: bool,
     func: F,
 ) -> Out
@@ -171,7 +171,7 @@ impl<C, Out: 'static> CacheData<C, Out> {
     /// Look for a matching entry in the cache.
     fn lookup<In>(&self, key: u128, input: &In) -> Option<&Out>
     where
-        In: Input<Question = C>,
+        In: Input<Call = C>,
         C: Clone,
     {
         self.entries
@@ -182,13 +182,9 @@ impl<C, Out: 'static> CacheData<C, Out> {
     }
 
     /// Insert an entry into the cache.
-    fn insert<In>(
-        &mut self,
-        key: u128,
-        constraint: Vec<(In::Question, u128)>,
-        output: Out,
-    ) where
-        In: Input<Question = C>,
+    fn insert<In>(&mut self, key: u128, constraint: Vec<(In::Call, u128)>, output: Out)
+    where
+        In: Input<Call = C>,
     {
         self.entries
             .entry(key)
@@ -215,9 +211,9 @@ struct CacheEntry<C, Out> {
 
 impl<C, Out: 'static> CacheEntry<C, Out> {
     /// Create a new entry.
-    fn new<In>(constraint: Vec<(In::Question, u128)>, output: Out) -> Self
+    fn new<In>(constraint: Vec<(In::Call, u128)>, output: Out) -> Self
     where
-        In: Input<Question = C>,
+        In: Input<Call = C>,
     {
         Self { constraint, output, age: AtomicUsize::new(0) }
     }
@@ -225,12 +221,12 @@ impl<C, Out: 'static> CacheEntry<C, Out> {
     /// Return the entry's output if it is valid for the given input.
     fn lookup<In>(&self, input: &In) -> Option<&Out>
     where
-        In: Input<Question = C>,
+        In: Input<Call = C>,
         C: Clone,
     {
         self.constraint
             .iter()
-            .all(|(q, hash)| input.ask(q.clone()) == *hash)
+            .all(|(call, hash)| input.call(call.clone()) == *hash)
             .then(|| {
                 self.age.store(0, Ordering::SeqCst);
                 &self.output
