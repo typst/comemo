@@ -84,9 +84,10 @@ where
     // Execute the function with the new constraints hooked in.
     let sink = |call: In::Call, hash: u128| {
         if call.is_mutable() {
-            list.lock().mutable.push(call)
+            list.lock().mutable.push(call);
+            true
         } else {
-            list.lock().immutable.insert(call, hash);
+            list.lock().immutable.insert(call, hash)
         }
     };
     let output = func(input.retrack(sink, bump));

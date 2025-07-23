@@ -32,7 +32,7 @@ pub trait Input {
     /// return the result alongside the outer constraints.
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
+        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
         b: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -69,7 +69,7 @@ impl<T: Hash> Input for T {
     #[inline]
     fn retrack<'r>(
         self,
-        _: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
+        _: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
         _: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -122,7 +122,7 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
+        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
         b: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -133,8 +133,9 @@ where
             value: self.value,
             id: self.id,
             sink: Some(b.alloc(move |c: T::Call, hash: u128| {
-                sink(c.clone(), hash);
-                if let Some(prev) = prev {
+                if sink(c.clone(), hash)
+                    && let Some(prev) = prev
+                {
                     prev(c, hash);
                 }
             })),
@@ -184,7 +185,7 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
+        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
         b: &'r Bump,
     ) -> Self::Tracked<'r>
     where
@@ -194,8 +195,9 @@ where
         TrackedMut {
             value: self.value,
             sink: Some(b.alloc(move |c: T::Call, hash: u128| {
-                sink(c.clone(), hash);
-                if let Some(prev) = prev {
+                if sink(c.clone(), hash)
+                    && let Some(prev) = prev
+                {
                     prev(c, hash);
                 }
             })),
@@ -243,7 +245,7 @@ macro_rules! args_input {
                 #[inline]
                 fn retrack<'r>(
                     self,
-                    sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
+                    sink: impl Fn(Self::Call, u128)-> bool  + Copy + Send + Sync + 'r,
                     bump: &'r Bump,
                 ) -> Self::Tracked<'r>
                 where

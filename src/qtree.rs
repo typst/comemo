@@ -26,16 +26,16 @@ impl<Q, A> LookaheadSequence<Q, A> {
 }
 
 impl<Q: Hash, A: Hash + Eq> LookaheadSequence<Q, A> {
-    pub fn insert(&mut self, q: Q, a: A) {
+    pub fn insert(&mut self, q: Q, a: A) -> bool {
         let h = crate::constraint::hash(&q);
         match self.map.entry(h) {
             Entry::Vacant(entry) => {
                 let i = self.vec.len();
                 self.vec.push(Some((q, a)));
                 entry.insert(i);
+                true
             }
-            Entry::Occupied(entry) =>
-            {
+            Entry::Occupied(entry) => {
                 #[cfg(debug_assertions)]
                 if let Some((_, a2)) = &self.vec[*entry.get()] {
                     if a != *a2 {
@@ -45,6 +45,7 @@ impl<Q: Hash, A: Hash + Eq> LookaheadSequence<Q, A> {
                         )
                     }
                 }
+                false
             }
         }
     }
