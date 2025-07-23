@@ -446,6 +446,43 @@ impl<'a> Chain<'a> {
     }
 }
 
+/// Test purely mutable tracking.
+#[test]
+#[serial]
+#[rustfmt::skip]
+fn test_purely_mutable() {
+    #[comemo::memoize]
+    fn dump(mut sink: TrackedMut<Sink>, value: &str) {
+        sink.emit(value);
+        sink.emit("1");
+    }
+
+    let mut sink = Sink(vec![]);
+    test!(miss: dump(sink.track_mut(), "a"), ());
+    test!(miss: dump(sink.track_mut(), "b"), ());
+    test!(miss: dump(sink.track_mut(), "c"), ());
+    test!(hit: dump(sink.track_mut(), "a"), ());
+    test!(hit: dump(sink.track_mut(), "b"), ());
+    assert_eq!(sink.0, [
+        "a", "1",
+        "b", "1",
+        "c", "1",
+        "a", "1",
+        "a", "1",
+    ])
+}
+
+/// A tracked type with a mutable and an immutable method.
+#[derive(Clone)]
+struct Sink(Vec<String>);
+
+#[track]
+impl Sink {
+    fn emit(&mut self, msg: &str) {
+        self.0.push(msg.into());
+    }
+}
+
 /// Test mutable tracking.
 #[test]
 #[serial]

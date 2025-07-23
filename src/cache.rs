@@ -47,35 +47,19 @@ where
     };
 
     // Check if there is a cached output.
-    let borrow = cache.0.read();
-    if let Some(value) = borrow.lookup::<In>(key, &input) {
-        // Replay the mutations.
-        // input.replay(constrained);
-
-        // Add the cached constraints to the outer ones.
-        // input.retrack(constraint, &bump).1.join(constrained);
-
+    if let Some(value) = cache.0.read().lookup::<In>(key, &input) {
         #[cfg(feature = "testing")]
         LAST_WAS_HIT.with(|cell| cell.set(true));
-
         return value.clone();
     }
-
-    // Release the borrow so that nested memoized calls can access the
-    // cache without dead locking.
-    drop(borrow);
 
     // Execute the function with the new constraints hooked in.
     let sink = |call, hash| list.lock().push(call, hash);
     let output = func(input.retrack(sink, bump));
-
     let list = std::mem::take(&mut *list.lock());
 
     // Insert the result into the cache.
-    let mut borrow = cache.0.write();
-    let result = borrow.insert::<In>(key, list, output.clone());
-
-    match result {
+    match cache.0.write().insert::<In>(key, list, output.clone()) {
         Ok(()) => {}
         Err(err) => {
             #[cfg(debug_assertions)]
