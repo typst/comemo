@@ -95,9 +95,10 @@ where
     // Insert the result into the cache.
     match cache.0.write().insert::<In>(key, list, output.clone()) {
         Ok(()) => {}
-        Err(err) => {
+        Err(InsertError::AlreadyExists) => {}
+        Err(InsertError::WrongQuestion) => {
             #[cfg(debug_assertions)]
-            panic!("comemo: cached function is non-deterministic ({err:?})");
+            panic!("comemo: cached function is non-deterministic");
         }
     }
 

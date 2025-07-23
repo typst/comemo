@@ -23,24 +23,27 @@ pub trait Track: Validate + Surfaces {
         TrackedMut { value: self, sink: None }
     }
 
-    // /// Start tracking all accesses into a constraint.
-    // #[inline]
-    // fn track_with<'a>(&'a self, constraint: &'a Self::Constraint) -> Tracked<'a, Self> {
-    //     Tracked {
-    //         value: self,
-    //         constraint: Some(constraint),
-    //         id: accelerate::id(),
-    //     }
-    // }
+    /// Start tracking all accesses into a constraint.
+    #[inline]
+    fn track_with<'a>(
+        &'a self,
+        sink: &'a (dyn Fn(Self::Call, u128) + Send + Sync),
+    ) -> Tracked<'a, Self> {
+        Tracked {
+            value: self,
+            sink: Some(sink),
+            id: accelerate::id(),
+        }
+    }
 
-    // /// Start tracking all accesses and mutations into a constraint.
-    // #[inline]
-    // fn track_mut_with<'a>(
-    //     &'a mut self,
-    //     constraint: &'a Self::Constraint,
-    // ) -> TrackedMut<'a, Self> {
-    //     TrackedMut { value: self, constraint: Some(constraint) }
-    // }
+    /// Start tracking all accesses and mutations into a constraint.
+    #[inline]
+    fn track_mut_with<'a>(
+        &'a mut self,
+        sink: &'a (dyn Fn(Self::Call, u128) + Send + Sync),
+    ) -> TrackedMut<'a, Self> {
+        TrackedMut { value: self, sink: Some(sink) }
+    }
 }
 
 /// A type that can be validated against constraints.
