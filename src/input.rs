@@ -102,13 +102,12 @@ where
 
     #[inline]
     fn call(&self, call: Self::Call) -> u128 {
-        let hash = if let Some(accelerator) = crate::accelerate::get(self.id) {
-            let mut map = accelerator.lock();
-            let call_hash = crate::constraint::hash(&call);
-            *map.entry(call_hash).or_insert_with(|| self.value.call(call.clone()))
-        } else {
-            self.value.call(call.clone())
-        };
+        // if let Some(accelerator) = crate::accelerate::get(self.id) {
+        //     let mut map = accelerator.lock();
+        //     let call_hash = crate::constraint::hash(&call);
+        //     return *map.entry(call_hash).or_insert_with(|| self.value.call(call));
+        // }
+        let hash = self.value.call(call.clone());
         if let Some(sink) = self.sink {
             sink(call, hash)
         }

@@ -21,7 +21,7 @@ macro_rules! test {
 
 #[test]
 #[serial]
-#[should_panic(expected = "comemo: cached function is non-deterministic")]
+#[should_panic(expected = "comemo: cached function is non-deterministic (WrongQuestion)")]
 fn test_non_deterministic() {
     use std::sync::atomic::Ordering::SeqCst;
 
