@@ -248,32 +248,13 @@ fn create(
     // Prepare validations.
     let prefix = trait_.as_ref().map(|name| quote! { #name for });
     let validations: Vec<_> = methods.iter().map(create_validation).collect();
-    let validate = if !methods.is_empty() {
-        quote! {
-            let mut this = #maybe_cloned;
-            constraint.validate(|call| match &call.0 { #(#validations,)* })
-        }
-    } else {
-        quote! { true }
-    };
-    let validate_with_id = if !methods.is_empty() {
-        quote! {
-            let mut this = #maybe_cloned;
-            constraint.validate_with_id(
-                |call| match &call.0 { #(#validations,)* },
-                id,
-            )
-        }
-    } else {
-        quote! { true }
-    };
 
     // Prepare replying.
     let immutable = methods.iter().all(|m| !m.mutable);
     let replays = methods.iter().map(create_replay);
     let replay = (!immutable).then(|| {
         quote! {
-            constraint.replay(|call| match &call.0 { #(#replays,)* });
+            constraint.replay(|call| match call.0 { #(#replays,)* });
         }
     });
 
@@ -299,12 +280,23 @@ fn create(
 
             #[inline]
             fn validate(&self, constraint: &Self::Constraint) -> bool {
-                #validate
+                let mut this = #maybe_cloned;
+                constraint.validate(|call| match call.0 { #(#validations,)* })
             }
 
             #[inline]
             fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool {
-                #validate_with_id
+                let mut this = #maybe_cloned;
+                constraint.validate_with_id(
+                    |call| match call.0 { #(#validations,)* },
+                    id,
+                )
+            }
+
+            #[inline]
+            fn ask(&self, call: Self::Call) -> u128 {
+                let mut this = #maybe_cloned;
+                match call.0 { #(#validations,)* }
             }
 
             #[inline]
@@ -380,7 +372,7 @@ fn create_validation(method: &Method) -> TokenStream {
         Kind::Reference => quote! { #arg },
     });
     quote! {
-        __ComemoVariant::#name(#(#args),*)
+        __ComemoVariant::#name(#(ref #args),*)
             => ::comemo::internal::hash(&this.#name(#(#prepared),*))
     }
 }
@@ -398,7 +390,7 @@ fn create_replay(method: &Method) -> TokenStream {
             self.#name(#(#prepared),*);
         }
     });
-    quote! { __ComemoVariant::#name(#(#args),*) => { #body } }
+    quote! { __ComemoVariant::#name(#(ref #args),*) => { #body } }
 }
 
 /// Produce a wrapped surface method.

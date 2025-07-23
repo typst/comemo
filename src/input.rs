@@ -17,7 +17,7 @@ pub trait Input {
     /// The constraints for this input.
     type Constraint: Default + Clone + Join + 'static;
 
-    type Question;
+    type Question: Clone + Send + Sync;
 
     /// The input with new constraints hooked in.
     type Tracked<'r>
@@ -29,6 +29,8 @@ pub trait Input {
 
     /// Hash the key parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
+
+    fn ask(&self, question: Self::Question) -> u128;
 
     /// Validate the tracked parts of the input.
     fn validate(&self, constraint: &Self::Constraint) -> bool;
@@ -60,6 +62,11 @@ impl<T: Hash> Input for T {
     #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
         Hash::hash(self, state);
+    }
+
+    #[inline]
+    fn ask(&self, _: Self::Question) -> u128 {
+        0
     }
 
     #[inline]
@@ -98,6 +105,11 @@ where
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
+
+    #[inline]
+    fn ask(&self, question: Self::Question) -> u128 {
+        self.value.ask(question)
+    }
 
     #[inline]
     fn validate(&self, constraint: &Self::Constraint) -> bool {
@@ -145,6 +157,11 @@ where
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
+
+    #[inline]
+    fn ask(&self, question: Self::Question) -> u128 {
+        self.value.ask(question)
+    }
 
     #[inline]
     fn validate(&self, constraint: &Self::Constraint) -> bool {
@@ -197,6 +214,13 @@ macro_rules! args_input {
                 }
 
                 #[inline]
+                fn ask(&self, question: Self::Question) -> u128 {
+                    match question {
+                        $(Question::$param($param) => (self.0).$idx.ask($param)),*
+                    }
+                }
+
+                #[inline]
                 fn validate(&self, constraint: &Self::Constraint) -> bool {
                     true $(&& (self.0).$idx.validate(&constraint.$idx))*
                 }
@@ -236,6 +260,7 @@ macro_rules! args_input {
                 }
             }
 
+            #[derive(Clone)]
             pub enum Question<$($param),*> {
                 $($param($param),)*
             }

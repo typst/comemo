@@ -3,11 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bumpalo::Bump;
 use once_cell::sync::Lazy;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
-use crate::constraint::Join;
 use crate::input::Input;
 
 /// The global list of eviction functions.
@@ -21,10 +20,10 @@ thread_local! {
 
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
-    mut input: In,
-    constraint: &'c In::Constraint,
+    input: In,
+    list: &'c Mutex<Vec<(In::Question, u128)>>,
     bump: &'c Bump,
-    cache: &Cache<In::Constraint, Out>,
+    cache: &Cache<In::Question, Out>,
     _enabled: bool,
     func: F,
 ) -> Out
@@ -48,12 +47,11 @@ where
 
     // Check if there is a cached output.
     let borrow = cache.0.read();
-    if let Some((constrained, value)) = borrow.lookup::<In>(key, &input) {
+    if let Some(value) = borrow.lookup::<In>(key, &input) {
         // Replay the mutations.
-        input.replay(constrained);
+        // input.replay(constrained);
 
         // Add the cached constraints to the outer ones.
-        // Oof.
         // input.retrack(constraint, &bump).1.join(constrained);
 
         #[cfg(feature = "testing")]
@@ -67,13 +65,15 @@ where
     drop(borrow);
 
     // Execute the function with the new constraints hooked in.
-    let sink = |_, _| {};
+    let sink = |call, hash| list.lock().push((call, hash));
     let input = input.retrack(sink, bump);
     let output = func(input);
 
+    let list = std::mem::take(&mut *list.lock());
+
     // Insert the result into the cache.
     let mut borrow = cache.0.write();
-    borrow.insert::<In>(key, constraint.take(), output.clone());
+    borrow.insert::<In>(key, list, output.clone());
 
     #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
@@ -169,9 +169,10 @@ impl<C, Out: 'static> CacheData<C, Out> {
     }
 
     /// Look for a matching entry in the cache.
-    fn lookup<In>(&self, key: u128, input: &In) -> Option<(&In::Constraint, &Out)>
+    fn lookup<In>(&self, key: u128, input: &In) -> Option<&Out>
     where
-        In: Input<Constraint = C>,
+        In: Input<Question = C>,
+        C: Clone,
     {
         self.entries
             .get(&key)?
@@ -181,9 +182,13 @@ impl<C, Out: 'static> CacheData<C, Out> {
     }
 
     /// Insert an entry into the cache.
-    fn insert<In>(&mut self, key: u128, constraint: In::Constraint, output: Out)
-    where
-        In: Input<Constraint = C>,
+    fn insert<In>(
+        &mut self,
+        key: u128,
+        constraint: Vec<(In::Question, u128)>,
+        output: Out,
+    ) where
+        In: Input<Question = C>,
     {
         self.entries
             .entry(key)
@@ -201,7 +206,7 @@ impl<C, Out> Default for CacheData<C, Out> {
 /// A memoized result.
 struct CacheEntry<C, Out> {
     /// The memoized function's constraint.
-    constraint: C,
+    constraint: Vec<(C, u128)>,
     /// The memoized function's output.
     output: Out,
     /// How many evictions have passed since the entry has been last used.
@@ -210,21 +215,25 @@ struct CacheEntry<C, Out> {
 
 impl<C, Out: 'static> CacheEntry<C, Out> {
     /// Create a new entry.
-    fn new<In>(constraint: In::Constraint, output: Out) -> Self
+    fn new<In>(constraint: Vec<(In::Question, u128)>, output: Out) -> Self
     where
-        In: Input<Constraint = C>,
+        In: Input<Question = C>,
     {
         Self { constraint, output, age: AtomicUsize::new(0) }
     }
 
     /// Return the entry's output if it is valid for the given input.
-    fn lookup<In>(&self, input: &In) -> Option<(&In::Constraint, &Out)>
+    fn lookup<In>(&self, input: &In) -> Option<&Out>
     where
-        In: Input<Constraint = C>,
+        In: Input<Question = C>,
+        C: Clone,
     {
-        input.validate(&self.constraint).then(|| {
-            self.age.store(0, Ordering::SeqCst);
-            (&self.constraint, &self.output)
-        })
+        self.constraint
+            .iter()
+            .all(|(q, hash)| input.ask(q.clone()) == *hash)
+            .then(|| {
+                self.age.store(0, Ordering::SeqCst);
+                &self.output
+            })
     }
 }

@@ -52,7 +52,7 @@ pub trait Track: Validate + Surfaces {
 pub trait Validate {
     /// The constraints for this type.
     type Constraint: Default + Clone + Join + 'static;
-    type Call: Clone;
+    type Call: Clone + Send + Sync;
 
     /// Whether this value fulfills the given constraints.
     ///
@@ -69,6 +69,8 @@ pub trait Validate {
     /// `self` must also be identical, unless [`evict`](crate::evict) has been
     /// called in between.
     fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool;
+
+    fn ask(&self, question: Self::Call) -> u128;
 
     /// Replay recorded mutations to the value.
     fn replay(&mut self, constraint: &Self::Constraint);
