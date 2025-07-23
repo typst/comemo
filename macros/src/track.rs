@@ -295,6 +295,7 @@ fn create(
 
         impl #impl_params ::comemo::Validate for #ty #where_clause {
             type Constraint = ::comemo::internal::#constraint<__ComemoCall>;
+            type Call = __ComemoCall;
 
             #[inline]
             fn validate(&self, constraint: &Self::Constraint) -> bool {

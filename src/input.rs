@@ -15,6 +15,8 @@ pub trait Input {
     /// The constraints for this input.
     type Constraint: Default + Clone + Join + 'static;
 
+    type Question;
+
     /// The input with new constraints hooked in.
     type Tracked<'r>
     where
@@ -45,6 +47,7 @@ pub trait Input {
 impl<T: Hash> Input for T {
     // No constraint for hashed inputs.
     type Constraint = ();
+    type Question = ();
     type Tracked<'r>
         = Self
     where
@@ -79,6 +82,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = <T as Validate>::Constraint;
+    type Question = T::Call;
     type Tracked<'r>
         = Tracked<'r, T>
     where
@@ -119,6 +123,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = T::Constraint;
+    type Question = T::Call;
     type Tracked<'r>
         = TrackedMut<'r, T>
     where
@@ -155,53 +160,60 @@ where
 pub struct Args<T>(pub T);
 
 macro_rules! args_input {
-    ($($param:tt $alt:tt $idx:tt ),*) => {
-        #[allow(unused_variables, non_snake_case)]
-        impl<$($param: Input),*> Input for Args<($($param,)*)> {
-            type Constraint = ($($param::Constraint,)*);
-            type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
-            type Outer = ($($param::Outer,)*);
+    ($($param:tt $alt:tt $idx:tt),*) => {
+        const _: () = {
+            #[allow(unused_variables, non_snake_case)]
+            impl<$($param: Input),*> Input for Args<($($param,)*)> {
+                type Constraint = ($($param::Constraint,)*);
+                type Question = Question<$($param),*>;
+                type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
+                type Outer = ($($param::Outer,)*);
 
-            #[inline]
-            fn key<T: Hasher>(&self, state: &mut T) {
-                $((self.0).$idx.key(state);)*
+                #[inline]
+                fn key<T: Hasher>(&self, state: &mut T) {
+                    $((self.0).$idx.key(state);)*
+                }
+
+                #[inline]
+                fn validate(&self, constraint: &Self::Constraint) -> bool {
+                    true $(&& (self.0).$idx.validate(&constraint.$idx))*
+                }
+
+                #[inline]
+                fn replay(&mut self, constraint: &Self::Constraint) {
+                    $((self.0).$idx.replay(&constraint.$idx);)*
+                }
+
+                #[inline]
+                fn retrack<'r>(
+                    self,
+                    constraint: &'r Self::Constraint,
+                ) -> (Self::Tracked<'r>, Self::Outer)
+                where
+                    Self: 'r,
+                {
+                    $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
+                    (($($param.0,)*), ($($param.1,)*))
+                }
             }
 
-            #[inline]
-            fn validate(&self, constraint: &Self::Constraint) -> bool {
-                true $(&& (self.0).$idx.validate(&constraint.$idx))*
+            #[allow(unused_variables, clippy::unused_unit)]
+            impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
+                #[inline]
+                fn join(&self, constraint: &($($alt,)*)) {
+                    $(self.$idx.join(&constraint.$idx);)*
+                }
+
+                #[inline]
+                fn take(&self) -> Self {
+                    ($(self.$idx.take(),)*)
+                }
             }
 
-            #[inline]
-            fn replay(&mut self, constraint: &Self::Constraint) {
-                $((self.0).$idx.replay(&constraint.$idx);)*
+            pub enum Question<$($param),*> {
+                $($param($param),)*
             }
-
-            #[inline]
-            fn retrack<'r>(
-                self,
-                constraint: &'r Self::Constraint,
-            ) -> (Self::Tracked<'r>, Self::Outer)
-            where
-                Self: 'r,
-            {
-                $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
-                (($($param.0,)*), ($($param.1,)*))
-            }
-        }
-
-        #[allow(unused_variables, clippy::unused_unit)]
-        impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
-            #[inline]
-            fn join(&self, constraint: &($($alt,)*)) {
-                $(self.$idx.join(&constraint.$idx);)*
-            }
-
-            #[inline]
-            fn take(&self) -> Self {
-                ($(self.$idx.take(),)*)
-            }
-        }
+        };
     };
 }
 

@@ -21,17 +21,6 @@ macro_rules! test {
 #[test]
 #[serial]
 fn test_context() {
-    struct Context {
-        location: Option<u64>,
-    }
-
-    #[track]
-    impl Context {
-        fn location(&self) -> Option<u64> {
-            self.location
-        }
-    }
-
     #[memoize]
     fn contextual(context: Tracked<Context>) -> String {
         if let Some(loc) = context.location() {
@@ -44,6 +33,17 @@ fn test_context() {
     for i in 0..10 {
         let context = Context { location: Some(i) };
         test!(miss: contextual(context.track()), format!("Location: {i}"));
+    }
+}
+
+struct Context {
+    location: Option<u64>,
+}
+
+#[track]
+impl Context {
+    fn location(&self) -> Option<u64> {
+        self.location
     }
 }
 

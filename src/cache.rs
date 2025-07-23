@@ -8,6 +8,7 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 use crate::accelerate;
 use crate::constraint::Join;
 use crate::input::Input;
+use crate::qtree::QuestionTree;
 
 /// The global list of eviction functions.
 static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());

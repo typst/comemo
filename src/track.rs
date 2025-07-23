@@ -56,6 +56,7 @@ pub trait Track: Validate + Surfaces {
 pub trait Validate {
     /// The constraints for this type.
     type Constraint: Default + Clone + Join + 'static;
+    type Call;
 
     /// Whether this value fulfills the given constraints.
     ///
