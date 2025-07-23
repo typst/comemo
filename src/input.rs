@@ -32,12 +32,6 @@ pub trait Input {
 
     fn call(&self, call: Self::Call) -> u128;
 
-    /// Validate the tracked parts of the input.
-    fn validate(&self, constraint: &Self::Constraint) -> bool;
-
-    /// Replay mutations to the input.
-    fn replay(&mut self, constraint: &Self::Constraint);
-
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
     fn retrack<'r>(
@@ -68,14 +62,6 @@ impl<T: Hash> Input for T {
     fn call(&self, _: Self::Call) -> u128 {
         0
     }
-
-    #[inline]
-    fn validate(&self, _: &()) -> bool {
-        true
-    }
-
-    #[inline]
-    fn replay(&mut self, _: &Self::Constraint) {}
 
     #[inline]
     fn retrack<'r>(
@@ -110,14 +96,6 @@ where
     fn call(&self, call: Self::Call) -> u128 {
         self.value.call(call)
     }
-
-    #[inline]
-    fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate_with_id(constraint, self.id)
-    }
-
-    #[inline]
-    fn replay(&mut self, _: &Self::Constraint) {}
 
     #[inline]
     fn retrack<'r>(
@@ -161,16 +139,6 @@ where
     #[inline]
     fn call(&self, call: Self::Call) -> u128 {
         self.value.call(call)
-    }
-
-    #[inline]
-    fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate(constraint)
-    }
-
-    #[inline]
-    fn replay(&mut self, constraint: &Self::Constraint) {
-        self.value.replay(constraint);
     }
 
     #[inline]
@@ -218,16 +186,6 @@ macro_rules! args_input {
                     match call {
                         $(Call::$param($param) => (self.0).$idx.call($param)),*
                     }
-                }
-
-                #[inline]
-                fn validate(&self, constraint: &Self::Constraint) -> bool {
-                    true $(&& (self.0).$idx.validate(&constraint.$idx))*
-                }
-
-                #[inline]
-                fn replay(&mut self, constraint: &Self::Constraint) {
-                    $((self.0).$idx.replay(&constraint.$idx);)*
                 }
 
                 #[inline]

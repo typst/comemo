@@ -247,16 +247,10 @@ fn create(
 
     // Prepare validations.
     let prefix = trait_.as_ref().map(|name| quote! { #name for });
-    let validations: Vec<_> = methods.iter().map(create_validation).collect();
+    let calls: Vec<_> = methods.iter().map(create_call).collect();
 
     // Prepare replying.
     let immutable = methods.iter().all(|m| !m.mutable);
-    let replays = methods.iter().map(create_replay);
-    let replay = (!immutable).then(|| {
-        quote! {
-            constraint.replay(|call| match call.0 { #(#replays,)* });
-        }
-    });
 
     // Prepare variants and wrapper methods.
     let wrapper_methods = methods
@@ -279,30 +273,9 @@ fn create(
             type Call = __ComemoCall;
 
             #[inline]
-            fn validate(&self, constraint: &Self::Constraint) -> bool {
-                let mut this = #maybe_cloned;
-                constraint.validate(|call| match call.0 { #(#validations,)* })
-            }
-
-            #[inline]
-            fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool {
-                let mut this = #maybe_cloned;
-                constraint.validate_with_id(
-                    |call| match call.0 { #(#validations,)* },
-                    id,
-                )
-            }
-
-            #[inline]
             fn call(&self, call: Self::Call) -> u128 {
                 let mut this = #maybe_cloned;
-                match call.0 { #(#validations,)* }
-            }
-
-            #[inline]
-            #[allow(unused_variables)]
-            fn replay(&mut self, constraint: &Self::Constraint) {
-                #replay
+                match call.0 { #(#calls,)* }
             }
         }
 
@@ -364,7 +337,7 @@ fn create_variant(method: &Method) -> TokenStream {
 }
 
 /// Produce a constraint validation for a method.
-fn create_validation(method: &Method) -> TokenStream {
+fn create_call(method: &Method) -> TokenStream {
     let name = &method.sig.ident;
     let args = &method.args;
     let prepared = method.args.iter().zip(&method.kinds).map(|(arg, kind)| match kind {
@@ -375,22 +348,6 @@ fn create_validation(method: &Method) -> TokenStream {
         __ComemoVariant::#name(#(ref #args),*)
             => ::comemo::internal::hash(&this.#name(#(#prepared),*))
     }
-}
-
-/// Produce a constraint validation for a method.
-fn create_replay(method: &Method) -> TokenStream {
-    let name = &method.sig.ident;
-    let args = &method.args;
-    let prepared = method.args.iter().zip(&method.kinds).map(|(arg, kind)| match kind {
-        Kind::Normal => quote! { #arg.to_owned() },
-        Kind::Reference => quote! { #arg },
-    });
-    let body = method.mutable.then(|| {
-        quote! {
-            self.#name(#(#prepared),*);
-        }
-    });
-    quote! { __ComemoVariant::#name(#(ref #args),*) => { #body } }
 }
 
 /// Produce a wrapped surface method.

@@ -54,27 +54,8 @@ pub trait Validate {
     type Constraint: Default + Clone + Join + 'static;
     type Call: Clone + Send + Sync;
 
-    /// Whether this value fulfills the given constraints.
-    ///
-    /// For a type `Foo`, empty constraints can be created with `<Foo as
-    /// Validate>::Constraint::default()` and filled with
-    /// [`track_with`](Track::track_with) or
-    /// [`track_mut_with`](Track::track_mut_with).
-    fn validate(&self, constraint: &Self::Constraint) -> bool;
-
-    /// Accelerated version of [`validate`](Self::validate).
-    ///
-    /// A `id` uniquely identifies a value to speed up repeated validation of
-    /// equal constraints against the same value. If given the same `id` twice,
-    /// `self` must also be identical, unless [`evict`](crate::evict) has been
-    /// called in between.
-    fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool;
-
     /// Performs a call on the value and returns the hash of its results.
     fn call(&self, call: Self::Call) -> u128;
-
-    /// Replay recorded mutations to the value.
-    fn replay(&mut self, constraint: &Self::Constraint);
 }
 
 /// This type's tracked surfaces.
