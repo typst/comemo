@@ -26,6 +26,8 @@ pub trait Input {
 
     fn call(&self, call: Self::Call) -> u128;
 
+    fn call_mut(&mut self, call: Self::Call) -> u128;
+
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
     fn retrack<'r>(
@@ -52,6 +54,11 @@ impl<T: Hash> Input for T {
 
     #[inline]
     fn call(&self, _: Self::Call) -> u128 {
+        0
+    }
+
+    #[inline]
+    fn call_mut(&mut self, _: Self::Call) -> u128 {
         0
     }
 
@@ -94,6 +101,11 @@ where
             sink(call, hash)
         }
         hash
+    }
+
+    #[inline]
+    fn call_mut(&mut self, call: Self::Call) -> u128 {
+        0
     }
 
     #[inline]
@@ -143,6 +155,15 @@ where
     }
 
     #[inline]
+    fn call_mut(&mut self, call: Self::Call) -> u128 {
+        let hash = self.value.call(call.clone());
+        if let Some(sink) = self.sink {
+            sink(call, hash)
+        }
+        hash
+    }
+
+    #[inline]
     fn retrack<'r>(
         self,
         sink: impl Fn(Self::Call, u128) + Copy + Send + Sync + 'r,
@@ -182,6 +203,13 @@ macro_rules! args_input {
 
                 #[inline]
                 fn call(&self, call: Self::Call) -> u128 {
+                    match call {
+                        $(ArgsCall::$param($param) => (self.0).$idx.call($param)),*
+                    }
+                }
+
+                #[inline]
+                fn call_mut(&mut self, call: Self::Call) -> u128 {
                     match call {
                         $(ArgsCall::$param($param) => (self.0).$idx.call($param)),*
                     }

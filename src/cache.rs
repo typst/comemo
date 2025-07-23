@@ -8,6 +8,7 @@ use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
 use crate::input::Input;
+use crate::internal::Call;
 use crate::qtree::{InsertError, LookaheadSequence, QuestionTree};
 
 /// The global list of eviction functions.
@@ -19,10 +20,24 @@ thread_local! {
     static LAST_WAS_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+pub struct Recording<C> {
+    immutable: LookaheadSequence<C, u128>,
+    mutable: Vec<C>,
+}
+
+impl<C> Default for Recording<C> {
+    fn default() -> Self {
+        Self {
+            immutable: LookaheadSequence::new(),
+            mutable: Vec::new(),
+        }
+    }
+}
+
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
-    input: In,
-    list: &'c Mutex<LookaheadSequence<In::Call, u128>>,
+    mut input: In,
+    list: &'c Mutex<Recording<In::Call>>,
     bump: &'c Bump,
     cache: &Cache<In::Call, Out>,
     _enabled: bool,
@@ -47,14 +62,26 @@ where
     };
 
     // Check if there is a cached output.
-    if let Some(value) = cache.0.read().lookup::<In>(key, &input) {
+    if let Some((value, mutable)) = cache.0.read().lookup::<In>(key, &input) {
         #[cfg(feature = "testing")]
         LAST_WAS_HIT.with(|cell| cell.set(true));
+
+        // Replay mutations.
+        for call in mutable {
+            input.call_mut(call.clone());
+        }
+
         return value.clone();
     }
 
     // Execute the function with the new constraints hooked in.
-    let sink = |call, hash| list.lock().push(call, hash);
+    let sink = |call: In::Call, hash: u128| {
+        if call.is_mutable() {
+            list.lock().mutable.push(call)
+        } else {
+            list.lock().immutable.push(call, hash)
+        }
+    };
     let output = func(input.retrack(sink, bump));
     let list = std::mem::take(&mut *list.lock());
 
@@ -144,12 +171,12 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
 /// The internal data for a cache.
 pub struct CacheData<C, Out> {
     /// Maps from hashes to memoized results.
-    entries: HashMap<u128, QuestionTree<C, u128, Out>>,
+    entries: HashMap<u128, QuestionTree<C, u128, (Out, Vec<C>)>>,
 }
 
 impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
     /// Look for a matching entry in the cache.
-    fn lookup<In>(&self, key: u128, input: &In) -> Option<&Out>
+    fn lookup<In>(&self, key: u128, input: &In) -> Option<&(Out, Vec<C>)>
     where
         In: Input<Call = C>,
         C: Clone + Hash,
@@ -158,17 +185,21 @@ impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
     }
 
     /// Insert an entry into the cache.
+    #[allow(clippy::extra_unused_type_parameters, reason = "false positive")]
     fn insert<In>(
         &mut self,
         key: u128,
-        constraint: LookaheadSequence<In::Call, u128>,
+        recording: Recording<C>,
         output: Out,
     ) -> Result<(), InsertError>
     where
         In: Input<Call = C>,
         C: Clone + Hash,
     {
-        self.entries.entry(key).or_default().insert(constraint, output)
+        self.entries
+            .entry(key)
+            .or_default()
+            .insert(recording.immutable, (output, recording.mutable))
     }
 }
 

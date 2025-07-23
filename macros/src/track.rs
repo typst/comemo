@@ -266,6 +266,12 @@ fn create(
                 let mut this = #maybe_cloned;
                 match call.0 { #(#calls,)* }
             }
+
+            #[inline]
+            fn call_mut(&mut self, call: Self::Call) -> u128 {
+                let mut this = self;
+                match call.0 { #(#calls,)* }
+            }
         }
 
         #[doc(hidden)]

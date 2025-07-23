@@ -55,6 +55,9 @@ pub trait Validate {
 
     /// Performs a call on the value and returns the hash of its results.
     fn call(&self, call: Self::Call) -> u128;
+
+    /// Performs a mutable call on the value.
+    fn call_mut(&mut self, call: Self::Call) -> u128;
 }
 
 /// This type's tracked surfaces.
