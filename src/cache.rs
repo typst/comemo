@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{LazyLock, RwLock};
 
-use parking_lot::RwLock;
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
@@ -45,7 +44,7 @@ where
     };
 
     // Check if there is a cached output.
-    let borrow = cache.0.read();
+    let borrow = cache.0.read().unwrap();
     if let Some((constrained, value)) = borrow.lookup::<In>(key, &input) {
         // Replay the mutations.
         input.replay(constrained);
@@ -71,7 +70,7 @@ where
     outer.join(constraint);
 
     // Insert the result into the cache.
-    let mut borrow = cache.0.write();
+    let mut borrow = cache.0.write().unwrap();
     borrow.insert::<In>(key, constraint.take(), output.clone());
 
     #[cfg(feature = "testing")]
@@ -111,7 +110,7 @@ where
 /// and is reset to zero when the result produces a cache hit. Set `max_age` to
 /// zero to completely clear the cache.
 pub fn evict(max_age: usize) {
-    for subevict in EVICTORS.read().iter() {
+    for subevict in EVICTORS.read().unwrap().iter() {
         subevict(max_age);
     }
 
@@ -120,7 +119,7 @@ pub fn evict(max_age: usize) {
 
 /// Register an eviction function in the global list.
 pub fn register_evictor(evict: fn(usize)) {
-    EVICTORS.write().push(evict);
+    EVICTORS.write().unwrap().push(evict);
 }
 
 /// Whether the last call was a hit.
@@ -144,7 +143,7 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
 
     /// Evict all entries whose age is larger than or equal to `max_age`.
     pub fn evict(&self, max_age: usize) {
-        self.0.write().evict(max_age)
+        self.0.write().unwrap().evict(max_age)
     }
 }
 

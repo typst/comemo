@@ -2,8 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
-
-use parking_lot::RwLock;
+use std::sync::RwLock;
 
 use crate::accelerate;
 
@@ -35,7 +34,7 @@ impl<T: Call> ImmutableConstraint<T> {
     pub fn push(&self, call: T, ret_hash: u128) {
         let call_hash = crate::hash::hash(&call);
         let entry = ConstraintEntry { call, call_hash, ret_hash };
-        self.0.write().push_inner(Cow::Owned(entry));
+        self.0.write().unwrap().push_inner(Cow::Owned(entry));
     }
 
     /// Whether the method satisfies as all input-output pairs.
@@ -44,7 +43,12 @@ impl<T: Call> ImmutableConstraint<T> {
     where
         F: FnMut(&T) -> u128,
     {
-        self.0.read().0.values().all(|entry| f(&entry.call) == entry.ret_hash)
+        self.0
+            .read()
+            .unwrap()
+            .0
+            .values()
+            .all(|entry| f(&entry.call) == entry.ret_hash)
     }
 
     /// Whether the method satisfies as all input-output pairs.
@@ -53,16 +57,15 @@ impl<T: Call> ImmutableConstraint<T> {
     where
         F: FnMut(&T) -> u128,
     {
-        let guard = self.0.read();
-        if let Some(accelerator) = accelerate::get(id) {
-            let mut map = accelerator.lock();
+        let guard = self.0.read().unwrap();
+        accelerate::with(id, |accelerator| {
+            let mut map = accelerator.lock().unwrap();
             guard.0.values().all(|entry| {
                 *map.entry(entry.call_hash).or_insert_with(|| f(&entry.call))
                     == entry.ret_hash
             })
-        } else {
-            guard.0.values().all(|entry| f(&entry.call) == entry.ret_hash)
-        }
+        })
+        .unwrap_or_else(|| guard.0.values().all(|entry| f(&entry.call) == entry.ret_hash))
     }
 
     /// Replay all input-output pairs.
@@ -72,7 +75,7 @@ impl<T: Call> ImmutableConstraint<T> {
         F: FnMut(&T),
     {
         #[cfg(debug_assertions)]
-        for entry in self.0.read().0.values() {
+        for entry in self.0.read().unwrap().0.values() {
             assert!(!entry.call.is_mutable());
         }
     }
@@ -80,7 +83,7 @@ impl<T: Call> ImmutableConstraint<T> {
 
 impl<T: Call> Clone for ImmutableConstraint<T> {
     fn clone(&self) -> Self {
-        Self(RwLock::new(self.0.read().clone()))
+        Self(RwLock::new(self.0.read().unwrap().clone()))
     }
 }
 
@@ -104,7 +107,7 @@ impl<T: Call> MutableConstraint<T> {
     pub fn push(&self, call: T, ret_hash: u128) {
         let call_hash = crate::hash::hash(&call);
         let entry = ConstraintEntry { call, call_hash, ret_hash };
-        self.0.write().push_inner(Cow::Owned(entry));
+        self.0.write().unwrap().push_inner(Cow::Owned(entry));
     }
 
     /// Whether the method satisfies as all input-output pairs.
@@ -113,7 +116,12 @@ impl<T: Call> MutableConstraint<T> {
     where
         F: FnMut(&T) -> u128,
     {
-        self.0.read().0.iter().all(|entry| f(&entry.call) == entry.ret_hash)
+        self.0
+            .read()
+            .unwrap()
+            .0
+            .iter()
+            .all(|entry| f(&entry.call) == entry.ret_hash)
     }
 
     /// Whether the method satisfies as all input-output pairs.
@@ -134,7 +142,7 @@ impl<T: Call> MutableConstraint<T> {
     where
         F: FnMut(&T),
     {
-        for entry in &self.0.read().0 {
+        for entry in &self.0.read().unwrap().0 {
             if entry.call.is_mutable() {
                 f(&entry.call);
             }
@@ -144,7 +152,7 @@ impl<T: Call> MutableConstraint<T> {
 
 impl<T: Call> Clone for MutableConstraint<T> {
     fn clone(&self) -> Self {
-        Self(RwLock::new(self.0.read().clone()))
+        Self(RwLock::new(self.0.read().unwrap().clone()))
     }
 }
 
@@ -243,30 +251,30 @@ impl<T: Join> Join<T> for Option<&T> {
 impl<T: Call> Join for ImmutableConstraint<T> {
     #[inline]
     fn join(&self, inner: &Self) {
-        let mut this = self.0.write();
-        for entry in inner.0.read().0.values() {
+        let mut this = self.0.write().unwrap();
+        for entry in inner.0.read().unwrap().0.values() {
             this.push_inner(Cow::Borrowed(entry));
         }
     }
 
     #[inline]
     fn take(&self) -> Self {
-        Self(RwLock::new(std::mem::take(&mut *self.0.write())))
+        Self(RwLock::new(std::mem::take(&mut *self.0.write().unwrap())))
     }
 }
 
 impl<T: Call> Join for MutableConstraint<T> {
     #[inline]
     fn join(&self, inner: &Self) {
-        let mut this = self.0.write();
-        for entry in inner.0.read().0.iter() {
+        let mut this = self.0.write().unwrap();
+        for entry in inner.0.read().unwrap().0.iter() {
             this.push_inner(Cow::Borrowed(entry));
         }
     }
 
     #[inline]
     fn take(&self) -> Self {
-        Self(RwLock::new(std::mem::take(&mut *self.0.write())))
+        Self(RwLock::new(std::mem::take(&mut *self.0.write().unwrap())))
     }
 }
 

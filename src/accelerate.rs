@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
+use std::sync::{Mutex, RwLock};
 
 /// The global list of currently alive accelerators.
 static ACCELERATORS: RwLock<(usize, Vec<Accelerator>)> = RwLock::new((0, Vec::new()));
@@ -22,27 +21,28 @@ pub fn id() -> usize {
 
 /// Evict the accelerators.
 pub fn evict() {
-    let mut accelerators = ACCELERATORS.write();
+    let mut accelerators = ACCELERATORS.write().unwrap();
     let (offset, vec) = &mut *accelerators;
 
     // Update the offset.
     *offset = ID.load(Ordering::SeqCst);
 
     // Clear all accelerators while keeping the memory allocated.
-    vec.iter_mut().for_each(|accelerator| accelerator.lock().clear())
+    vec.iter_mut()
+        .for_each(|accelerator| accelerator.get_mut().unwrap().clear())
 }
 
 /// Get an accelerator by ID.
-pub fn get(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>> {
+pub fn with<T>(id: usize, f: impl FnOnce(&Accelerator) -> T) -> Option<T> {
     // We always lock the accelerators, as we need to make sure that the
     // accelerator is not removed while we are reading it.
-    let mut accelerators = ACCELERATORS.read();
+    let mut accelerators = ACCELERATORS.read().unwrap();
 
     let mut i = id.checked_sub(accelerators.0)?;
     if i >= accelerators.1.len() {
         drop(accelerators);
         resize(i + 1);
-        accelerators = ACCELERATORS.read();
+        accelerators = ACCELERATORS.read().unwrap();
 
         // Because we release the lock before resizing the accelerator, we need
         // to check again whether the ID is still valid because another thread
@@ -50,13 +50,14 @@ pub fn get(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>> {
         i = id.checked_sub(accelerators.0)?;
     }
 
-    Some(RwLockReadGuard::map(accelerators, move |(_, vec)| &vec[i]))
+    let (_, vec) = &*accelerators;
+    Some(f(&vec[i]))
 }
 
 /// Adjusts the amount of accelerators.
 #[cold]
 fn resize(len: usize) {
-    let mut pair = ACCELERATORS.write();
+    let mut pair = ACCELERATORS.write().unwrap();
     if len > pair.1.len() {
         pair.1.resize_with(len, || Mutex::new(HashMap::new()));
     }

@@ -97,8 +97,6 @@ pub use comemo_macros::{memoize, track};
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use parking_lot::RwLock;
-
     pub use crate::cache::{Cache, CacheData, memoized, register_evictor};
     pub use crate::constraint::{Call, ImmutableConstraint, MutableConstraint};
     pub use crate::hash::hash;
