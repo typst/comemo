@@ -113,7 +113,17 @@ where
         if i != u32::MAX {
             return cache.0.read().values[i as usize].clone();
         }
-        let value = func(input.retrack_noop());
+
+        // Execute the function with the new constraints hooked in.
+        let sink = |call: In::Call, hash: u128| {
+            if call.is_mutable() {
+                list.lock().mutable.push(call);
+                true
+            } else {
+                list.lock().immutable.insert(call, hash)
+            }
+        };
+        let value = func(input.retrack(sink, bump));
         cache.0.write().values.push(value.clone());
         return value;
     }
