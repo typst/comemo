@@ -35,11 +35,12 @@ categories = { workspace = true }
 keywords = { workspace = true }
 
 [features]
-default = []
+default = ["macros"]
+macros = ["dep:comemo-macros"]
 testing = []
 
 [dependencies]
-comemo-macros = { workspace = true }
+comemo-macros = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 siphasher = { workspace = true }
 
@@ -49,4 +50,4 @@ serial_test = { workspace = true }
 [[test]]
 name = "tests"
 path = "tests/tests.rs"
-required-features = ["testing"]
+required-features = ["macros", "testing"]
