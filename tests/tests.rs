@@ -529,7 +529,7 @@ impl Emitter {
 }
 
 /// A non-copy struct that is passed by value to a tracked method.
-#[derive(Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 struct Heavy(String);
 
 /// Test a tracked method that is impure.

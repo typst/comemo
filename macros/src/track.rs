@@ -198,7 +198,7 @@ fn create_variants(methods: &[Method]) -> TokenStream {
     };
 
     quote! {
-        #[derive(Clone, PartialEq, Hash)]
+        #[derive(Debug, Clone, PartialEq, Hash)]
         pub struct __ComemoCall(__ComemoVariant);
 
         impl ::comemo::internal::Call for __ComemoCall {
@@ -207,7 +207,7 @@ fn create_variants(methods: &[Method]) -> TokenStream {
             }
         }
 
-        #[derive(Clone, PartialEq, Hash)]
+        #[derive(Debug, Clone, PartialEq, Hash)]
         #[allow(non_camel_case_types)]
         enum __ComemoVariant {
             #(#variants,)*
@@ -362,16 +362,18 @@ fn create_wrapper(method: &Method, tracked_mut: bool) -> TokenStream {
         #[track_caller]
         #[inline]
         #vis #sig {
-            let __comemo_variant = __ComemoVariant::#name(#(#args.to_owned()),*);
             let (__comemo_value, __comemo_sink) = ::comemo::internal::#to_parts;
-            let output = __comemo_value.#name(#(#args,)*);
             if let Some(__comemo_sink) = __comemo_sink {
+                let __comemo_variant = __ComemoVariant::#name(#(#args.to_owned()),*);
+                let output = __comemo_value.#name(#(#args,)*);
                 __comemo_sink(
                     __ComemoCall(__comemo_variant),
                     ::comemo::internal::hash(&output),
                 );
+                output
+            } else {
+                __comemo_value.#name(#(#args,)*)
             }
-            output
         }
     }
 }

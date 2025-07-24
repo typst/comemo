@@ -92,7 +92,7 @@ mod prehashed;
 mod qtree;
 mod track;
 
-pub use crate::cache::evict;
+pub use crate::cache::{evict, put_prescience, write_prescience};
 pub use crate::prehashed::Prehashed;
 pub use crate::track::{Track, Tracked, TrackedMut, Validate};
 pub use comemo_macros::{memoize, track};

@@ -1,9 +1,10 @@
+use std::fmt::Debug;
 use std::hash::Hash;
 
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 /// A call to a tracked function.
-pub trait Call: Hash + PartialEq + Clone + Send + Sync {
+pub trait Call: Debug + Hash + PartialEq + Clone + Send + Sync {
     /// Whether the call is mutable.
     fn is_mutable(&self) -> bool;
 }

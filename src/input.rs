@@ -268,7 +268,7 @@ macro_rules! args_input {
                 }
             }
 
-            #[derive(PartialEq, Clone, Hash)]
+            #[derive(Debug, PartialEq, Clone, Hash)]
             pub enum ArgsCall<$($param),*> {
                 $($param($param),)*
             }

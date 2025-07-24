@@ -1,5 +1,8 @@
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::marker::PhantomData;
+use std::sync::atomic::AtomicUsize;
 
 use bumpalo::Bump;
 use once_cell::sync::Lazy;
@@ -34,6 +37,64 @@ impl<C> Default for Recording<C> {
     }
 }
 
+pub fn write_prescience(mut sink: impl std::io::Write) {
+    let locked = PRESCIENCE_WRITE.data.lock();
+    let slice: &[u32] = &locked;
+    let buf: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            slice.as_ptr().cast(),
+            slice.len() * (u32::BITS / u8::BITS) as usize,
+        )
+    };
+    sink.write_all(buf).unwrap();
+}
+
+struct PrescienceWrite {
+    data: Mutex<Vec<u32>>,
+}
+
+impl PrescienceWrite {
+    fn hit(&self, i: usize) {
+        self.data.lock().push(i as u32);
+    }
+
+    fn miss(&self) {
+        self.data.lock().push(u32::MAX);
+    }
+}
+
+static PRESCIENCE_WRITE: PrescienceWrite =
+    PrescienceWrite { data: Mutex::new(Vec::new()) };
+
+pub fn put_prescience(data: &'static [u8]) {
+    let slice: &'static [u32] =
+        unsafe { std::slice::from_raw_parts(data.as_ptr().cast(), data.len() / 4) };
+    unsafe {
+        *PRESCIENCE_READ.data.get() = slice;
+    }
+}
+
+struct PrescienceRead {
+    data: UnsafeCell<&'static [u32]>,
+    i: AtomicUsize,
+}
+
+impl PrescienceRead {
+    fn get(&self) -> Option<u32> {
+        let i = self.i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let slice = unsafe { *self.data.get() };
+        if slice.is_empty() {
+            return None;
+        }
+        Some(slice[i])
+    }
+}
+
+unsafe impl Sync for PrescienceRead {}
+
+static PRESCIENCE_READ: PrescienceRead =
+    PrescienceRead { data: UnsafeCell::new(&[]), i: AtomicUsize::new(0) };
+
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
     mut input: In,
@@ -48,17 +109,13 @@ where
     Out: Clone + 'static,
     F: FnOnce(In::Tracked<'c>) -> Out,
 {
-    // Early bypass if memoization is disabled.
-    // Hopefully the compiler will optimize this away, if the condition is constant.
-    if !enabled {
-        // Execute the function with the new constraints hooked in.
-        let output = func(input.retrack_noop());
-
-        // Ensure that the last call was a miss during testing.
-        #[cfg(feature = "testing")]
-        LAST_WAS_HIT.with(|cell| cell.set(false));
-
-        return output;
+    if let Some(i) = PRESCIENCE_READ.get() {
+        if i != u32::MAX {
+            return cache.0.read().values[i as usize].clone();
+        }
+        let value = func(input.retrack_noop());
+        cache.0.write().values.push(value.clone());
+        return value;
     }
 
     // Compute the hash of the input's key part.
@@ -69,7 +126,9 @@ where
     };
 
     // Check if there is a cached output.
-    if let Some((value, mutable)) = cache.0.read().lookup::<In>(key, &input) {
+    if let Some((i, value, mutable)) = cache.0.read().lookup::<In>(key, &input) {
+        PRESCIENCE_WRITE.hit(i);
+
         #[cfg(feature = "testing")]
         LAST_WAS_HIT.with(|cell| cell.set(true));
 
@@ -80,6 +139,8 @@ where
 
         return value.clone();
     }
+
+    PRESCIENCE_WRITE.miss();
 
     // Execute the function with the new constraints hooked in.
     let sink = |call: In::Call, hash: u128| {
@@ -159,17 +220,21 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
 /// The internal data for a cache.
 pub struct CacheData<C, Out> {
     /// Maps from hashes to memoized results.
-    entries: HashMap<u128, QuestionTree<C, u128, (Out, Vec<C>)>>,
+    entries: HashMap<u128, QuestionTree<C, u128, (usize, Vec<C>)>>,
+    values: Vec<Out>,
 }
 
 impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
     /// Look for a matching entry in the cache.
-    fn lookup<In>(&self, key: u128, input: &In) -> Option<&(Out, Vec<C>)>
+    fn lookup<In>(&self, key: u128, input: &In) -> Option<(usize, &Out, &Vec<C>)>
     where
         In: Input<Call = C>,
         C: Clone + Hash,
     {
-        self.entries.get(&key)?.get(|c| input.call(c.clone()))
+        self.entries
+            .get(&key)?
+            .get(|c| input.call(c.clone()))
+            .map(|(i, c)| (*i, &self.values[*i], c))
     }
 
     /// Insert an entry into the cache.
@@ -184,15 +249,21 @@ impl<C: PartialEq, Out: 'static> CacheData<C, Out> {
         In: Input<Call = C>,
         C: Clone + Hash,
     {
-        self.entries
+        let i = self.values.len();
+        let res = self
+            .entries
             .entry(key)
             .or_default()
-            .insert(recording.immutable, (output, recording.mutable))
+            .insert(recording.immutable, (i, recording.mutable));
+        if res.is_ok() {
+            self.values.push(output);
+        }
+        res
     }
 }
 
 impl<C, Out> Default for CacheData<C, Out> {
     fn default() -> Self {
-        Self { entries: HashMap::new() }
+        Self { entries: HashMap::new(), values: Vec::new() }
     }
 }
