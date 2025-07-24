@@ -1,7 +1,7 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use siphasher::sip128::{Hasher128, SipHasher13};
 
@@ -130,7 +130,7 @@ pub fn last_was_hit() -> bool {
 }
 
 /// A cache for a single memoized function.
-pub struct Cache<C, Out>(Lazy<RwLock<CacheData<C, Out>>>);
+pub struct Cache<C, Out>(LazyLock<RwLock<CacheData<C, Out>>>);
 
 impl<C: 'static, Out: 'static> Cache<C, Out> {
     /// Create an empty cache.
@@ -139,7 +139,7 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
     /// pointer cannot be passed as an argument otherwise the function
     /// passed to `Lazy::new` is a closure and not a function pointer.
     pub const fn new(init: fn() -> RwLock<CacheData<C, Out>>) -> Self {
-        Self(Lazy::new(init))
+        Self(LazyLock::new(init))
     }
 
     /// Evict all entries whose age is larger than or equal to `max_age`.
