@@ -109,6 +109,15 @@ where
     Out: Clone + 'static,
     F: FnOnce(In::Tracked<'c>) -> Out,
 {
+    // Compute the hash of the input's key part.
+    let key = {
+        let mut state = SipHasher13::new();
+        input.key(&mut state);
+        state.finish128().as_u128()
+    };
+
+    std::hint::black_box(key);
+
     if let Some(i) = PRESCIENCE_READ.get() {
         if i != u32::MAX {
             return cache.0.read().values[i as usize].clone();
@@ -127,13 +136,6 @@ where
         cache.0.write().values.push(value.clone());
         return value;
     }
-
-    // Compute the hash of the input's key part.
-    let key = {
-        let mut state = SipHasher13::new();
-        input.key(&mut state);
-        state.finish128().as_u128()
-    };
 
     // Check if there is a cached output.
     if let Some((i, value, mutable)) = cache.0.read().lookup::<In>(key, &input) {
