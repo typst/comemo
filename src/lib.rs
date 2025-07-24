@@ -85,12 +85,12 @@ For the full example see [`examples/calc.rs`][calc].
 mod accelerate;
 mod cache;
 mod constraint;
+mod hash;
 mod input;
-mod prehashed;
 mod track;
 
 pub use crate::cache::evict;
-pub use crate::prehashed::Prehashed;
+pub use crate::hash::Prehashed;
 pub use crate::track::{Track, Tracked, TrackedMut, Validate};
 pub use comemo_macros::{memoize, track};
 
@@ -100,7 +100,8 @@ pub mod internal {
     pub use parking_lot::RwLock;
 
     pub use crate::cache::{Cache, CacheData, memoized, register_evictor};
-    pub use crate::constraint::{Call, ImmutableConstraint, MutableConstraint, hash};
+    pub use crate::constraint::{Call, ImmutableConstraint, MutableConstraint};
+    pub use crate::hash::hash;
     pub use crate::input::{Args, Input, assert_hashable_or_trackable};
     pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
 

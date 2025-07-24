@@ -4,7 +4,6 @@ use std::collections::hash_map::Entry;
 use std::hash::Hash;
 
 use parking_lot::RwLock;
-use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
 
@@ -34,7 +33,7 @@ impl<T: Call> ImmutableConstraint<T> {
     /// Enter a constraint for a call to an immutable function.
     #[inline]
     pub fn push(&self, call: T, ret_hash: u128) {
-        let call_hash = hash(&call);
+        let call_hash = crate::hash::hash(&call);
         let entry = ConstraintEntry { call, call_hash, ret_hash };
         self.0.write().push_inner(Cow::Owned(entry));
     }
@@ -103,7 +102,7 @@ impl<T: Call> MutableConstraint<T> {
     /// Enter a constraint for a call to a mutable function.
     #[inline]
     pub fn push(&self, call: T, ret_hash: u128) {
-        let call_hash = hash(&call);
+        let call_hash = crate::hash::hash(&call);
         let entry = ConstraintEntry { call, call_hash, ret_hash };
         self.0.write().push_inner(Cow::Owned(entry));
     }
@@ -269,14 +268,6 @@ impl<T: Call> Join for MutableConstraint<T> {
     fn take(&self) -> Self {
         Self(RwLock::new(std::mem::take(&mut *self.0.write())))
     }
-}
-
-/// Produce a 128-bit hash of a value.
-#[inline]
-pub fn hash<T: Hash>(value: &T) -> u128 {
-    let mut state = SipHasher13::new();
-    value.hash(&mut state);
-    state.finish128().as_u128()
 }
 
 /// Check for a constraint violation.

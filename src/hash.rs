@@ -6,6 +6,28 @@ use std::ops::Deref;
 
 use siphasher::sip128::{Hasher128, SipHasher13};
 
+/// Produce a 128-bit hash of a value.
+#[inline]
+pub fn hash<T: Hash>(value: &T) -> u128 {
+    let mut state = SipHasher13::new();
+    value.hash(&mut state);
+    state.finish128().as_u128()
+}
+
+/// Produce a 128-bit hash of a value's type and the value.
+///
+/// Prefer this over `hash` if the resulting hash is used for the same purpose
+/// as hashes of other types.
+#[inline]
+pub fn hash_any<T: Hash + 'static>(item: &T) -> u128 {
+    // Also hash the TypeId because the type might be converted
+    // through an unsized coercion.
+    let mut state = SipHasher13::new();
+    item.type_id().hash(&mut state);
+    item.hash(&mut state);
+    state.finish128().as_u128()
+}
+
 /// A wrapper type with precomputed hash.
 ///
 /// This is useful if you want to pass large values of `T` to memoized
@@ -37,7 +59,7 @@ impl<T: Hash + 'static> Prehashed<T> {
     /// Compute an item's hash and wrap it.
     #[inline]
     pub fn new(item: T) -> Self {
-        Self { hash: hash(&item), item }
+        Self { hash: hash_any(&item), item }
     }
 
     /// Return the wrapped value.
@@ -53,19 +75,9 @@ impl<T: Hash + 'static> Prehashed<T> {
         F: FnOnce(&mut T) -> U,
     {
         let output = f(&mut self.item);
-        self.hash = hash(&self.item);
+        self.hash = hash_any(&self.item);
         output
     }
-}
-
-/// Hash the item.
-fn hash<T: Hash + 'static>(item: &T) -> u128 {
-    // Also hash the TypeId because the type might be converted
-    // through an unsized coercion.
-    let mut state = SipHasher13::new();
-    item.type_id().hash(&mut state);
-    item.hash(&mut state);
-    state.finish128().as_u128()
 }
 
 impl<T: ?Sized> Deref for Prehashed<T> {
