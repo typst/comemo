@@ -92,6 +92,8 @@ mod track;
 pub use crate::cache::evict;
 pub use crate::hash::Prehashed;
 pub use crate::track::{Track, Tracked, TrackedMut, Validate};
+
+#[cfg(feature = "macros")]
 pub use comemo_macros::{memoize, track};
 
 /// These are implementation details. Do not rely on them!
