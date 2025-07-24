@@ -133,7 +133,15 @@ where
             }
         };
         let value = func(input.retrack(sink, bump));
-        cache.0.write().values.push(value.clone());
+        let list = std::mem::take(&mut *list.lock());
+        let mut borrow = cache.0.write();
+        let i = borrow.values.len();
+        borrow
+            .entries
+            .entry(key)
+            .or_default()
+            .insert(list.immutable, (i, list.mutable));
+        borrow.values.push(value.clone());
         return value;
     }
 
