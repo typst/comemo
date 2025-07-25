@@ -101,15 +101,13 @@ pub struct CallTree<C, T> {
     /// Inner nodes, storing calls.
     inner: Slab<InnerNode<C>>,
     /// Leaf nodes, directly storing outputs.
-    leaves: Slab<T>,
+    leaves: Slab<LeafNode<T>>,
     /// The initial node for the given key hash.
     start: HashMap<u128, NodeId>,
     /// Maps from parent nodes to child nodes. The key is a pair of an inner
     /// node ID and a return hash for that call. The value is the node to
     /// transition to.
     edges: HashMap<(InnerId, u128), NodeId>,
-    /// The parent node for each node. Essentially the inverse of `edges`.
-    edges_rev: HashMap<NodeId, InnerId>,
 }
 
 /// An inner node in the call tree.
@@ -119,6 +117,16 @@ struct InnerNode<C> {
     /// How many children the node has. If this reaches zero, the node is
     /// deleted.
     children: usize,
+    /// The node's parent.
+    parent: Option<InnerId>,
+}
+
+/// A leaf node in the call tree.
+struct LeafNode<T> {
+    /// The value.
+    value: T,
+    /// The node's parent.
+    parent: Option<InnerId>,
 }
 
 impl<C, T> CallTree<C, T> {
@@ -128,7 +136,6 @@ impl<C, T> CallTree<C, T> {
             inner: Slab::new(),
             leaves: Slab::new(),
             edges: HashMap::new(),
-            edges_rev: HashMap::new(),
             start: HashMap::new(),
         }
     }
@@ -141,7 +148,7 @@ impl<C: Hash, T> CallTree<C, T> {
         loop {
             match cursor.kind() {
                 NodeIdKind::Leaf(id) => {
-                    return Some(&self.leaves[id]);
+                    return Some(&self.leaves[id].value);
                 }
                 NodeIdKind::Inner(id) => {
                     let call = &self.inner[id].call;
@@ -192,7 +199,11 @@ impl<C: Hash, T> CallTree<C, T> {
                 // sequence.
                 let Some((call, ret)) = sequence.next() else { break };
 
-                let new_inner_id = self.inner.insert(InnerNode { call, children: 0 });
+                let new_inner_id = self.inner.insert(InnerNode {
+                    call,
+                    children: 0,
+                    parent: predecessor.map(|(id, _)| id),
+                });
                 let new_id = NodeId::inner(new_inner_id);
                 self.link(cursor.is_none(), key, predecessor.take(), new_id);
 
@@ -205,7 +216,10 @@ impl<C: Hash, T> CallTree<C, T> {
             return Err(InsertError::AlreadyExists);
         }
 
-        let target = NodeId::leaf(self.leaves.insert(value));
+        let target = NodeId::leaf(
+            self.leaves
+                .insert(LeafNode { value, parent: predecessor.map(|(id, _)| id) }),
+        );
         self.link(cursor.is_none(), key, predecessor, target);
 
         Ok(())
@@ -225,7 +239,6 @@ impl<C: Hash, T> CallTree<C, T> {
         if let Some(pair) = from {
             self.inner[pair.0].children += 1;
             self.edges.insert(pair, to);
-            self.edges_rev.insert(to, pair.0);
         }
     }
 
@@ -233,19 +246,19 @@ impl<C: Hash, T> CallTree<C, T> {
     /// returns `false`.
     pub fn retain(&mut self, mut f: impl FnMut(&mut T) -> bool) {
         // Prune from the leafs upwards, starting with the outputs.
-        self.leaves.retain(|leaf_id, output| {
-            let keep = f(output);
+        self.leaves.retain(|_, node| {
+            let keep = f(&mut node.value);
             if !keep {
                 // Delete parents iteratively while we are the only child.
-                let mut current = self.edges_rev.remove(&NodeId::leaf(leaf_id));
-                while let Some(inner_id) = current {
+                let mut parent = node.parent;
+                while let Some(inner_id) = parent {
                     let node = &mut self.inner[inner_id];
                     if node.children > 1 {
                         node.children -= 1;
                         break;
                     } else {
+                        parent = self.inner[inner_id].parent;
                         self.inner.remove(inner_id);
-                        current = self.edges_rev.remove(&NodeId::inner(inner_id));
                     }
                 }
             }
@@ -271,14 +284,13 @@ impl<C: Hash, T> CallTree<C, T> {
             NodeIdKind::Leaf(id) => self.leaves.contains(id),
         };
 
-        assert_eq!(self.edges.len(), self.edges_rev.len());
         for &node in self.start.values() {
             assert!(exists(node));
         }
+
         for (&(inner_id, _), &node) in &self.edges {
             assert!(exists(node));
             assert!(self.inner.contains(inner_id));
-            assert_eq!(self.edges_rev.get(&node), Some(&inner_id));
         }
     }
 }
@@ -290,7 +302,7 @@ impl<C: Debug, T: Debug> Debug for CallTree<C, T> {
             write!(f, "[{inner_id}] ({call:?}, {ret:?}) -> ")?;
             match next.kind() {
                 NodeIdKind::Inner(id) => writeln!(f, "{id}")?,
-                NodeIdKind::Leaf(id) => writeln!(f, "{:?}", &self.leaves[id])?,
+                NodeIdKind::Leaf(id) => writeln!(f, "{:?}", &self.leaves[id].value)?,
             }
         }
         Ok(())
