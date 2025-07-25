@@ -5,9 +5,7 @@ use crate::accelerate;
 use crate::call::Call;
 
 /// A sink to which tracked calls can be sent.
-pub trait Sink<C>: Send + Sync {
-    fn emit(&self, call: C, ret: u128) -> bool;
-}
+type Sink<'a, C> = &'a (dyn Fn(C, u128) + Send + Sync);
 
 /// A trackable type.
 ///
@@ -39,7 +37,7 @@ pub trait Track: Surfaces {
 
     /// Start tracking all accesses into a sink.
     #[inline]
-    fn track_with<'a>(&'a self, sink: &'a dyn Sink<Self::Call>) -> Tracked<'a, Self> {
+    fn track_with<'a>(&'a self, sink: Sink<'a, Self::Call>) -> Tracked<'a, Self> {
         Tracked {
             value: self,
             sink: Some(sink),
@@ -51,7 +49,7 @@ pub trait Track: Surfaces {
     #[inline]
     fn track_mut_with<'a>(
         &'a mut self,
-        sink: &'a dyn Sink<Self::Call>,
+        sink: Sink<'a, Self::Call>,
     ) -> TrackedMut<'a, Self> {
         TrackedMut { value: self, sink: Some(sink) }
     }
@@ -139,7 +137,7 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) sink: Option<&'a dyn Sink<C>>,
+    pub(crate) sink: Option<&'a (dyn Fn(C, u128) + Send + Sync)>,
     /// A unique ID for validation acceleration.
     pub(crate) id: usize,
 }
@@ -200,7 +198,7 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) sink: Option<&'a dyn Sink<C>>,
+    pub(crate) sink: Option<&'a (dyn Fn(C, u128) + Send + Sync)>,
 }
 
 impl<'a, T> TrackedMut<'a, T>
@@ -277,7 +275,7 @@ where
 
 /// Destructure a `Tracked<_>` into its parts.
 #[inline]
-pub fn to_parts_ref<T>(tracked: Tracked<'_, T>) -> (&T, Option<&dyn Sink<T::Call>>)
+pub fn to_parts_ref<T>(tracked: Tracked<'_, T>) -> (&T, Option<Sink<'_, T::Call>>)
 where
     T: Track + ?Sized,
 {
@@ -288,7 +286,7 @@ where
 #[inline]
 pub fn to_parts_mut_ref<'a, T>(
     tracked: &'a TrackedMut<T>,
-) -> (&'a T, Option<&'a dyn Sink<T::Call>>)
+) -> (&'a T, Option<Sink<'a, T::Call>>)
 where
     T: Track + ?Sized,
 {
@@ -299,7 +297,7 @@ where
 #[inline]
 pub fn to_parts_mut_mut<'a, T>(
     tracked: &'a mut TrackedMut<T>,
-) -> (&'a mut T, Option<&'a dyn Sink<T::Call>>)
+) -> (&'a mut T, Option<Sink<'a, T::Call>>)
 where
     T: Track + ?Sized,
 {

@@ -9,7 +9,6 @@ use crate::accelerate;
 use crate::call::Call;
 use crate::calltree::{CallSequence, CallTree, InsertError};
 use crate::input::Input;
-use crate::track::Sink;
 
 /// The global list of eviction functions.
 static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
@@ -34,21 +33,10 @@ impl<C> Default for Recording<C> {
     }
 }
 
-impl<C: Call> Sink<C> for &'_ Mutex<Recording<C>> {
-    fn emit(&self, call: C, ret: u128) -> bool {
-        if call.is_mutable() {
-            self.lock().mutable.push(call);
-            true
-        } else {
-            self.lock().immutable.insert(call, ret)
-        }
-    }
-}
-
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
     mut input: In,
-    sink: &'c Mutex<Recording<In::Call>>,
+    list: &'c Mutex<Recording<In::Call>>,
     bump: &'c Bump,
     cache: &Cache<In::Call, Out>,
     enabled: bool,
@@ -95,8 +83,16 @@ where
     }
 
     // Execute the function with the new constraints hooked in.
+    let sink = |call: In::Call, hash: u128| {
+        if call.is_mutable() {
+            list.lock().mutable.push(call);
+            true
+        } else {
+            list.lock().immutable.insert(call, hash)
+        }
+    };
     let output = func(input.retrack(sink, bump));
-    let list = std::mem::take(&mut *sink.lock());
+    let list = std::mem::take(&mut *list.lock());
 
     // Insert the result into the cache.
     match cache.0.write().insert::<In>(key, list, output.clone()) {
