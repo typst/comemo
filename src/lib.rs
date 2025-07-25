@@ -107,15 +107,11 @@ pub use comemo_macros::{memoize, track};
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use bumpalo::Bump;
-    pub use parking_lot::RwLock;
-
+    #[cfg(feature = "testing")]
+    pub use crate::cache::last_was_hit;
     pub use crate::cache::{Cache, memoized, register_evictor};
     pub use crate::call::Call;
     pub use crate::hash::hash;
     pub use crate::input::{Input, Multi, assert_hashable_or_trackable};
     pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
-
-    #[cfg(feature = "testing")]
-    pub use crate::cache::last_was_hit;
 }
