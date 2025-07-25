@@ -148,7 +148,7 @@ fn process(function: &Function) -> Result<TokenStream> {
 
     wrapped.block = parse_quote! { {
         static __CACHE: ::comemo::internal::Cache<
-            <::comemo::internal::Args<#arg_ty_tuple> as ::comemo::internal::Input>::Constraint,
+            <::comemo::internal::Multi<#arg_ty_tuple> as ::comemo::internal::Input>::Call,
             #output,
         > = ::comemo::internal::Cache::new(|| {
             ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
@@ -158,7 +158,8 @@ fn process(function: &Function) -> Result<TokenStream> {
         #(#bounds;)*
 
         ::comemo::internal::memoized(
-            ::comemo::internal::Args(#arg_tuple),
+            ::comemo::internal::Multi(#arg_tuple),
+            &::core::default::Default::default(),
             &::core::default::Default::default(),
             &__CACHE,
             #enabled,

@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
 
-use comemo::{Track, Tracked, TrackedMut, Validate, evict, memoize, track};
+use comemo::{Track, Tracked, TrackedMut, evict, memoize, track};
 use serial_test::serial;
 
 macro_rules! test {
@@ -16,6 +17,88 @@ macro_rules! test {
         assert_eq!($call, $result);
         assert!(comemo::internal::last_was_hit());
     }};
+}
+
+#[test]
+#[serial]
+#[should_panic(expected = "comemo: cached function is non-deterministic")]
+fn test_non_deterministic() {
+    use std::sync::atomic::Ordering::SeqCst;
+
+    static FOO: AtomicUsize = AtomicUsize::new(0);
+
+    #[memoize]
+    fn contextual(context: Tracked<Context>) -> String {
+        if FOO.load(SeqCst) == 0 {
+            let _ = context.location();
+        } else {
+            let _ = context.styles();
+        }
+        String::new()
+    }
+
+    let context = Context { location: Some(0), styles: "styles" };
+    FOO.store(0, SeqCst);
+    contextual(context.track());
+
+    let context = Context { location: Some(1), styles: "styles" };
+    FOO.store(1, SeqCst);
+    contextual(context.track());
+}
+
+#[test]
+#[serial]
+fn test_context() {
+    #[memoize]
+    fn contextual(context: Tracked<Context>) -> String {
+        if let Some(loc) = context.location() {
+            if loc == 5 {
+                format!("Twenty has {}", context.styles())
+            } else {
+                format!("Location: {loc}")
+            }
+        } else {
+            "No location".into()
+        }
+    }
+
+    fn oracle(context: &Context) -> String {
+        if let Some(loc) = context.location {
+            if loc == 5 {
+                format!("Twenty has {}", context.styles)
+            } else {
+                format!("Location: {loc}")
+            }
+        } else {
+            "No location".into()
+        }
+    }
+
+    for i in 0..10 {
+        let context = Context { location: Some(i), styles: "styles" };
+        test!(miss: contextual(context.track()), oracle(&context));
+    }
+
+    for i in 0..10 {
+        let context = Context { location: Some(i), styles: "styles" };
+        test!(hit: contextual(context.track()), oracle(&context));
+    }
+}
+
+struct Context {
+    location: Option<u64>,
+    styles: &'static str,
+}
+
+#[track]
+impl Context {
+    fn location(&self) -> Option<u64> {
+        self.location
+    }
+
+    fn styles(&self) -> &'static str {
+        self.styles
+    }
 }
 
 /// Test basic memoization.
@@ -340,7 +423,7 @@ fn test_variance() {
 struct Chain<'a> {
     // Need to override the lifetime here so that a `Tracked` is covariant over
     // `Chain`.
-    outer: Option<Tracked<'a, Self, <Chain<'static> as Validate>::Constraint>>,
+    outer: Option<Tracked<'a, Self, <Chain<'static> as Track>::Call>>,
     value: u32,
 }
 
@@ -360,6 +443,43 @@ impl<'a> Chain<'a> {
 impl<'a> Chain<'a> {
     fn contains(&self, value: u32) -> bool {
         self.value == value || self.outer.is_some_and(|outer| outer.contains(value))
+    }
+}
+
+/// Test purely mutable tracking.
+#[test]
+#[serial]
+#[rustfmt::skip]
+fn test_purely_mutable() {
+    #[comemo::memoize]
+    fn dump(mut sink: TrackedMut<Sink>, value: &str) {
+        sink.emit(value);
+        sink.emit("1");
+    }
+
+    let mut sink = Sink(vec![]);
+    test!(miss: dump(sink.track_mut(), "a"), ());
+    test!(miss: dump(sink.track_mut(), "b"), ());
+    test!(miss: dump(sink.track_mut(), "c"), ());
+    test!(hit: dump(sink.track_mut(), "a"), ());
+    test!(hit: dump(sink.track_mut(), "b"), ());
+    assert_eq!(sink.0, [
+        "a", "1",
+        "b", "1",
+        "c", "1",
+        "a", "1",
+        "b", "1",
+    ])
+}
+
+/// A tracked type with a mutable and an immutable method.
+#[derive(Clone)]
+struct Sink(Vec<String>);
+
+#[track]
+impl Sink {
+    fn emit(&mut self, msg: &str) {
+        self.0.push(msg.into());
     }
 }
 
@@ -417,7 +537,7 @@ struct Heavy(String);
 #[serial]
 #[cfg(debug_assertions)]
 #[should_panic(
-    expected = "comemo: found conflicting constraints. is this tracked function pure?"
+    expected = "comemo: found differing return values. is there an impure tracked function?"
 )]
 fn test_impure_tracked_method() {
     #[comemo::memoize]
