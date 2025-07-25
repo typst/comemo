@@ -1,11 +1,11 @@
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use bumpalo::Bump;
 use parking_lot::{Mutex, RwLock};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
-use crate::arena::Arena;
 use crate::call::Call;
 use crate::calltree::{CallSequence, CallTree, InsertError};
 use crate::input::Input;
@@ -37,7 +37,7 @@ impl<C> Default for Recording<C> {
 pub fn memoized<'c, In, Out, F>(
     mut input: In,
     list: &'c Mutex<Recording<In::Call>>,
-    bump: &'c Arena,
+    bump: &'c Bump,
     cache: &Cache<In::Call, Out>,
     enabled: bool,
     func: F,
