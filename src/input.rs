@@ -1,9 +1,10 @@
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 use bumpalo::Bump;
 
 use crate::call::Call;
-use crate::track::{Track, Tracked, TrackedMut};
+use crate::track::{Sink, Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
 #[inline]
@@ -40,7 +41,7 @@ pub trait Input {
     /// return the result alongside the outer constraints.
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
+        sink: impl Sink<Self::Call> + Copy + 'r,
         b: &'r Bump,
     ) -> Self::WithLifetime<'r>
     where
@@ -79,7 +80,7 @@ impl<T: Hash> Input for T {
     #[inline]
     fn retrack<'r>(
         self,
-        _: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
+        _: impl Sink<Self::Call> + Copy + 'r,
         _: &'r Bump,
     ) -> Self::WithLifetime<'r>
     where
@@ -121,7 +122,7 @@ where
             self.value.call(call.clone())
         };
         if let Some(sink) = self.sink {
-            sink(call, hash)
+            sink.emit(call, hash);
         }
         hash
     }
@@ -135,23 +136,16 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
+        sink: impl Sink<Self::Call> + Copy + 'r,
         b: &'r Bump,
     ) -> Self::WithLifetime<'r>
     where
         Self: 'r,
     {
-        let prev = self.sink;
         Tracked {
             value: self.value,
             id: self.id,
-            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
-                if sink(c.clone(), hash)
-                    && let Some(prev) = prev
-                {
-                    prev(c, hash);
-                }
-            })),
+            sink: Some(b.alloc(TrackedSink { sink, outer: self.sink })),
         }
     }
 
@@ -161,6 +155,23 @@ where
         Self: 'r,
     {
         self
+    }
+}
+
+struct TrackedSink<'a, C, S: Sink<C>> {
+    sink: S,
+    outer: Option<&'a dyn Sink<C>>,
+}
+
+impl<C: Clone, S: Sink<C>> Sink<C> for TrackedSink<'_, C, S> {
+    fn emit(&self, call: C, ret: u128) -> bool {
+        if self.sink.emit(call.clone(), ret) {
+            if let Some(outer) = self.outer {
+                return outer.emit(call, ret);
+            }
+            return true;
+        }
+        false
     }
 }
 
@@ -182,7 +193,7 @@ where
     fn call(&self, call: Self::Call) -> u128 {
         let hash = self.value.call(call.clone());
         if let Some(sink) = self.sink {
-            sink(call, hash)
+            sink.emit(call, hash);
         }
         hash
     }
@@ -191,7 +202,7 @@ where
     fn call_mut(&mut self, call: Self::Call) -> u128 {
         let hash = self.value.call_mut(call.clone());
         if let Some(sink) = self.sink {
-            sink(call, hash)
+            sink.emit(call, hash);
         }
         hash
     }
@@ -199,22 +210,15 @@ where
     #[inline]
     fn retrack<'r>(
         self,
-        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
+        sink: impl Sink<Self::Call> + Copy + 'r,
         b: &'r Bump,
     ) -> Self::WithLifetime<'r>
     where
         Self: 'r,
     {
-        let prev = self.sink;
         TrackedMut {
             value: self.value,
-            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
-                if sink(c.clone(), hash)
-                    && let Some(prev) = prev
-                {
-                    prev(c, hash);
-                }
-            })),
+            sink: Some(b.alloc(TrackedSink { sink, outer: self.sink })),
         }
     }
 
@@ -231,70 +235,110 @@ where
 pub struct Multi<T>(pub T);
 
 macro_rules! multi {
-    ($($param:tt $alt:tt $idx:tt),*) => {
-        #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
+    (@inner $($param:tt $alt:tt $idx:tt),*) => {
+        impl<$($param: Input),*> Input for Multi<($($param,)*)> {
+            type Call = MultiCall<$($param::Call),*>;
+            type WithLifetime<'r> = ($($param::WithLifetime<'r>,)*) where Self: 'r;
+
+            #[inline]
+            fn key<T: Hasher>(&self, state: &mut T) {
+                $((self.0).$idx.key(state);)*
+            }
+
+            #[inline]
+            fn call(&self, call: Self::Call) -> u128 {
+                match call {
+                    $(MultiCall::$param($param) => (self.0).$idx.call($param)),*
+                }
+            }
+
+            #[inline]
+            fn call_mut(&mut self, call: Self::Call) -> u128 {
+                match call {
+                    $(MultiCall::$param($param) => (self.0).$idx.call_mut($param)),*
+                }
+            }
+
+            #[inline]
+            fn retrack<'r>(
+                self,
+                sink: impl Sink<Self::Call> + Copy + 'r,
+                bump: &'r Bump,
+            ) -> Self::WithLifetime<'r>
+            where
+                Self: 'r,
+            {
+                $(let $param = (self.0).$idx.retrack(
+                    sinks::$param::Pick(sink, PhantomData),
+                    bump,
+                );)*
+                ($($param,)*)
+            }
+
+            #[inline]
+            fn reborrow<'r>(self) -> Self::WithLifetime<'r>
+            where
+                Self: 'r,
+            {
+                $(let $param = (self.0).$idx.reborrow();)*
+                ($($param,)*)
+            }
+        }
+
+        #[derive(PartialEq, Clone, Hash)]
+        pub enum MultiCall<$($param),*> {
+            $($param($param),)*
+        }
+
+        impl<$($param: Call),*> Call for MultiCall<$($param),*> {
+            #[inline]
+            fn is_mutable(&self) -> bool {
+                match *self {
+                    $(Self::$param(ref $param) => $param.is_mutable(),)*
+                }
+            }
+        }
+
+        mod sinks {
+            use super::*;
+            multi!(@picks $($param,)*; ($($param,)*));
+        }
+    };
+
+    (@picks $($param1:ident,)*; $rest:tt) => {
+        $(pub mod $param1 {
+            use super::*;
+            multi!(@pick $param1; $rest);
+        })*
+    };
+
+    (@pick $pick:ident; ($($param:ident,)*)) => {
+        pub struct Pick<$($param,)* S>(pub S, pub PhantomData<fn(($($param,)*))>);
+
+        impl<$($param,)* S> Sink<$pick> for Pick<$($param,)* S>
+        where
+            S: Sink<MultiCall<$($param,)*>>,
+        {
+            fn emit(&self, call: $pick, ret: u128) -> bool {
+                self.0.emit(super::MultiCall::$pick(call), ret)
+            }
+        }
+
+        impl<$($param,)* S: Copy> Copy for Pick<$($param,)* S> {}
+
+        impl<$($param,)* S: Clone> Clone for Pick<$($param,)* S> {
+            fn clone(&self) -> Self {
+                Self(self.0.clone(), PhantomData)
+            }
+        }
+    };
+
+    ($($tts:tt)*) => {
+        #[allow(unused_variables, unused_imports, clippy::unused_unit, non_snake_case)]
         const _: () = {
-            impl<$($param: Input),*> Input for Multi<($($param,)*)> {
-                type Call = MultiCall<$($param::Call),*>;
-                type WithLifetime<'r> = ($($param::WithLifetime<'r>,)*) where Self: 'r;
-
-                #[inline]
-                fn key<T: Hasher>(&self, state: &mut T) {
-                    $((self.0).$idx.key(state);)*
-                }
-
-                #[inline]
-                fn call(&self, call: Self::Call) -> u128 {
-                    match call {
-                        $(MultiCall::$param($param) => (self.0).$idx.call($param)),*
-                    }
-                }
-
-                #[inline]
-                fn call_mut(&mut self, call: Self::Call) -> u128 {
-                    match call {
-                        $(MultiCall::$param($param) => (self.0).$idx.call_mut($param)),*
-                    }
-                }
-
-                #[inline]
-                fn retrack<'r>(
-                    self,
-                    sink: impl Fn(Self::Call, u128)-> bool  + Copy + Send + Sync + 'r,
-                    bump: &'r Bump,
-                ) -> Self::WithLifetime<'r>
-                where
-                    Self: 'r,
-                {
-                    $(let $param = (self.0).$idx.retrack(
-                        move |call, hash| sink(MultiCall::$param(call), hash),
-                        bump,
-                    );)*
-                    ($($param,)*)
-                }
-
-                #[inline]
-                fn reborrow<'r>(self) -> Self::WithLifetime<'r>
-                where
-                    Self: 'r,
-                {
-                    $(let $param = (self.0).$idx.reborrow();)*
-                    ($($param,)*)
-                }
-            }
-
-            #[derive(PartialEq, Clone, Hash)]
-            pub enum MultiCall<$($param),*> {
-                $($param($param),)*
-            }
-
-            impl<$($param: Call),*> Call for MultiCall<$($param),*> {
-                #[inline]
-                fn is_mutable(&self) -> bool {
-                    match *self {
-                        $(Self::$param(ref $param) => $param.is_mutable(),)*
-                    }
-                }
+            mod _inner {
+                use super::*;
+                multi!(@inner $($tts)*);
             }
         };
     };
