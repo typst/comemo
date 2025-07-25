@@ -89,6 +89,7 @@ For the full example see [`examples/calc.rs`][calc].
 */
 
 mod accelerate;
+mod arena;
 mod cache;
 mod call;
 mod calltree;

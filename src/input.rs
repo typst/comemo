@@ -1,7 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use bumpalo::Bump;
-
+use crate::arena::Arena;
 use crate::call::Call;
 use crate::track::{Track, Tracked, TrackedMut};
 
@@ -41,7 +40,7 @@ pub trait Input {
     fn retrack<'r>(
         self,
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
-        b: &'r Bump,
+        b: &'r Arena,
     ) -> Self::WithLifetime<'r>
     where
         Self: 'r;
@@ -80,7 +79,7 @@ impl<T: Hash> Input for T {
     fn retrack<'r>(
         self,
         _: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
-        _: &'r Bump,
+        _: &'r Arena,
     ) -> Self::WithLifetime<'r>
     where
         Self: 'r,
@@ -136,7 +135,7 @@ where
     fn retrack<'r>(
         self,
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
-        b: &'r Bump,
+        b: &'r Arena,
     ) -> Self::WithLifetime<'r>
     where
         Self: 'r,
@@ -200,7 +199,7 @@ where
     fn retrack<'r>(
         self,
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'r,
-        b: &'r Bump,
+        b: &'r Arena,
     ) -> Self::WithLifetime<'r>
     where
         Self: 'r,
@@ -261,7 +260,7 @@ macro_rules! multi {
                 fn retrack<'r>(
                     self,
                     sink: impl Fn(Self::Call, u128)-> bool  + Copy + Send + Sync + 'r,
-                    bump: &'r Bump,
+                    bump: &'r Arena,
                 ) -> Self::WithLifetime<'r>
                 where
                     Self: 'r,
