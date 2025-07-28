@@ -19,17 +19,17 @@ thread_local! {
 }
 
 /// Execute a function or use a cached result for it.
-pub fn memoized<'c, In, Out, F>(
+pub fn memoized<'a, In, Out, F>(
     mut input: In,
-    constraint: &'c In::Constraint,
+    constraint: &'a In::Constraint,
     cache: &Cache<In::Constraint, Out>,
     enabled: bool,
     func: F,
 ) -> Out
 where
-    In: Input + 'c,
+    In: Input<'a>,
     Out: Clone + 'static,
-    F: FnOnce(In::Tracked<'c>) -> Out,
+    F: FnOnce(In) -> Out,
 {
     // Early bypass if memoization is disabled.
     // Hopefully the compiler will optimize this away, if the condition is constant.
@@ -80,15 +80,15 @@ where
     output
 }
 
-fn memoized_disabled<'c, In, Out, F>(
+fn memoized_disabled<'a, In, Out, F>(
     input: In,
-    constraint: &'c In::Constraint,
+    constraint: &'a In::Constraint,
     func: F,
 ) -> Out
 where
-    In: Input + 'c,
+    In: Input<'a>,
     Out: Clone + 'static,
-    F: FnOnce(In::Tracked<'c>) -> Out,
+    F: FnOnce(In) -> Out,
 {
     // Execute the function with the new constraints hooked in.
     let (input, outer) = input.retrack(constraint);
@@ -168,9 +168,9 @@ impl<C, Out: 'static> CacheData<C, Out> {
     }
 
     /// Look for a matching entry in the cache.
-    fn lookup<In>(&self, key: u128, input: &In) -> Option<(&In::Constraint, &Out)>
+    fn lookup<'a, In>(&self, key: u128, input: &In) -> Option<(&In::Constraint, &Out)>
     where
-        In: Input<Constraint = C>,
+        In: Input<'a, Constraint = C>,
     {
         self.entries
             .get(&key)?
@@ -180,9 +180,9 @@ impl<C, Out: 'static> CacheData<C, Out> {
     }
 
     /// Insert an entry into the cache.
-    fn insert<In>(&mut self, key: u128, constraint: In::Constraint, output: Out)
+    fn insert<'a, In>(&mut self, key: u128, constraint: In::Constraint, output: Out)
     where
-        In: Input<Constraint = C>,
+        In: Input<'a, Constraint = C>,
     {
         self.entries
             .entry(key)
@@ -209,17 +209,17 @@ struct CacheEntry<C, Out> {
 
 impl<C, Out: 'static> CacheEntry<C, Out> {
     /// Create a new entry.
-    fn new<In>(constraint: In::Constraint, output: Out) -> Self
+    fn new<'a, In>(constraint: In::Constraint, output: Out) -> Self
     where
-        In: Input<Constraint = C>,
+        In: Input<'a, Constraint = C>,
     {
         Self { constraint, output, age: AtomicUsize::new(0) }
     }
 
     /// Return the entry's output if it is valid for the given input.
-    fn lookup<In>(&self, input: &In) -> Option<(&In::Constraint, &Out)>
+    fn lookup<'a, In>(&self, input: &In) -> Option<(&In::Constraint, &Out)>
     where
-        In: Input<Constraint = C>,
+        In: Input<'a, Constraint = C>,
     {
         input.validate(&self.constraint).then(|| {
             self.age.store(0, Ordering::SeqCst);

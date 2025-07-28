@@ -5,20 +5,15 @@ use crate::track::{Track, Tracked, TrackedMut, Validate};
 
 /// Ensure a type is suitable as input.
 #[inline]
-pub fn assert_hashable_or_trackable<In: Input>(_: &In) {}
+pub fn assert_hashable_or_trackable<'a, In: Input<'a>>(_: &In) {}
 
 /// An input to a cached function.
 ///
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
-pub trait Input {
+pub trait Input<'a> {
     /// The constraints for this input.
     type Constraint: Default + Clone + Join + 'static;
-
-    /// The input with new constraints hooked in.
-    type Tracked<'r>
-    where
-        Self: 'r;
 
     /// The extracted outer constraints.
     type Outer: Join<Self::Constraint>;
@@ -34,21 +29,14 @@ pub trait Input {
 
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
-    fn retrack<'r>(
-        self,
-        constraint: &'r Self::Constraint,
-    ) -> (Self::Tracked<'r>, Self::Outer)
+    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer)
     where
-        Self: 'r;
+        Self: Sized;
 }
 
-impl<T: Hash> Input for T {
+impl<'a, T: Hash> Input<'a> for T {
     // No constraint for hashed inputs.
     type Constraint = ();
-    type Tracked<'r>
-        = Self
-    where
-        Self: 'r;
     type Outer = ();
 
     #[inline]
@@ -65,24 +53,17 @@ impl<T: Hash> Input for T {
     fn replay(&mut self, _: &Self::Constraint) {}
 
     #[inline]
-    fn retrack<'r>(self, _: &'r ()) -> (Self::Tracked<'r>, Self::Outer)
-    where
-        Self: 'r,
-    {
+    fn retrack(self, _: &'a ()) -> (Self, Self::Outer) {
         (self, ())
     }
 }
 
-impl<'a, T> Input for Tracked<'a, T>
+impl<'a, T> Input<'a> for Tracked<'a, T>
 where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = <T as Validate>::Constraint;
-    type Tracked<'r>
-        = Tracked<'r, T>
-    where
-        Self: 'r;
     type Outer = Option<&'a Self::Constraint>;
 
     #[inline]
@@ -97,13 +78,7 @@ where
     fn replay(&mut self, _: &Self::Constraint) {}
 
     #[inline]
-    fn retrack<'r>(
-        self,
-        constraint: &'r Self::Constraint,
-    ) -> (Self::Tracked<'r>, Self::Outer)
-    where
-        Self: 'r,
-    {
+    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer) {
         let tracked = Tracked {
             value: self.value,
             constraint: Some(constraint),
@@ -113,16 +88,12 @@ where
     }
 }
 
-impl<'a, T> Input for TrackedMut<'a, T>
+impl<'a, T> Input<'a> for TrackedMut<'a, T>
 where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
     type Constraint = T::Constraint;
-    type Tracked<'r>
-        = TrackedMut<'r, T>
-    where
-        Self: 'r;
     type Outer = Option<&'a Self::Constraint>;
 
     #[inline]
@@ -139,13 +110,7 @@ where
     }
 
     #[inline]
-    fn retrack<'r>(
-        self,
-        constraint: &'r Self::Constraint,
-    ) -> (Self::Tracked<'r>, Self::Outer)
-    where
-        Self: 'r,
-    {
+    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer) {
         let tracked = TrackedMut { value: self.value, constraint: Some(constraint) };
         (tracked, self.constraint)
     }
@@ -157,9 +122,8 @@ pub struct Args<T>(pub T);
 macro_rules! args_input {
     ($($param:tt $alt:tt $idx:tt ),*) => {
         #[allow(unused_variables, non_snake_case)]
-        impl<$($param: Input),*> Input for Args<($($param,)*)> {
+        impl<'a, $($param: Input<'a>),*> Input<'a> for Args<($($param,)*)> {
             type Constraint = ($($param::Constraint,)*);
-            type Tracked<'r> = ($($param::Tracked<'r>,)*) where Self: 'r;
             type Outer = ($($param::Outer,)*);
 
             #[inline]
@@ -178,15 +142,12 @@ macro_rules! args_input {
             }
 
             #[inline]
-            fn retrack<'r>(
+            fn retrack(
                 self,
-                constraint: &'r Self::Constraint,
-            ) -> (Self::Tracked<'r>, Self::Outer)
-            where
-                Self: 'r,
-            {
+                constraint: &'a Self::Constraint,
+            ) -> (Self, Self::Outer) {
                 $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
-                (($($param.0,)*), ($($param.1,)*))
+                (Args(($($param.0,)*)), ($($param.1,)*))
             }
         }
 

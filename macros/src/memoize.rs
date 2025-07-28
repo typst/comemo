@@ -134,7 +134,7 @@ fn process(function: &Function) -> Result<TokenStream> {
     // Construct the inner closure.
     let output = &function.output;
     let body = &function.item.block;
-    let closure = quote! { |#param_tuple| -> #output #body };
+    let closure = quote! { |::comemo::internal::Args(#param_tuple)| -> #output #body };
 
     // Adjust the function's body.
     let mut wrapped = function.item.clone();
