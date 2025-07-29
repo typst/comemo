@@ -1,6 +1,6 @@
 use std::any::{Any, TypeId};
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use parking_lot::{Mutex, RwLock};
 use siphasher::sip128::{Hasher128, SipHasher13};
@@ -47,26 +47,19 @@ impl<C: Call> Sink for &Mutex<Recording<C>> {
     }
 }
 
-static CACHES: LazyLock<RwLock<fxhash::FxHashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
+static CACHES: LazyLock<RwLock<fxhash::FxHashMap<TypeId, Arc<dyn Any + Send + Sync>>>> =
     LazyLock::new(|| RwLock::new(fxhash::FxHashMap::default()));
 
 fn get_cache<C: Send + Sync + 'static, Out: Send + Sync + 'static>(
     id: TypeId,
-) -> &'static Cache<C, Out> {
-    let ptr: *const (dyn Any + Send + Sync) = if let Some(boxed) = CACHES.read().get(&id)
-    {
-        &**boxed as _
+) -> Arc<Cache<C, Out>> {
+    if let Some(arc) = CACHES.read().get(&id) {
+        arc.clone().downcast().unwrap()
     } else {
         let mut borrowed = CACHES.write();
-        let boxed = borrowed.entry(id).or_insert_with(|| {
-            Box::new(Cache::<C, Out>::new()) as Box<dyn Any + Send + Sync>
-        });
-        &**boxed as _
-    };
-
-    unsafe { &*ptr as &'static (dyn Any + Send + Sync) }
-        .downcast_ref::<Cache<C, Out>>()
-        .unwrap()
+        let arc = borrowed.entry(id).or_insert_with(|| Arc::new(Cache::<C, Out>::new()));
+        arc.clone().downcast().unwrap()
+    }
 }
 
 /// Execute a function or use a cached result for it.
