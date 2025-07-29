@@ -158,12 +158,13 @@ where
     type Call = C;
 
     fn emit(&self, call: C, ret: u128) -> bool {
-        if self.sink.emit(call.clone(), ret)
-            && let Some(prev) = self.prev
-        {
-            prev.emit(call, ret)
-        } else {
+        if self.sink.emit(call.clone(), ret) {
+            if let Some(prev) = self.prev {
+                prev.emit(call, ret);
+            }
             true
+        } else {
+            false
         }
     }
 }
