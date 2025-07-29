@@ -17,7 +17,6 @@ pub trait Input<'a> {
     /// An enumeration of possible tracked calls that can be performed on any
     /// tracked part of this input.
     type Call: Call;
-    type Sink;
 
     /// Hashes the key (i.e. not tracked) parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
@@ -34,17 +33,12 @@ pub trait Input<'a> {
 
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
-    fn retrack(
-        &mut self,
-        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
-        b: &'a Bump,
-    );
+    fn retrack(&mut self, sink: impl Sink<Self::Call> + Copy + 'a, b: &'a Bump);
 }
 
 impl<'a, T: Hash> Input<'a> for T {
     // No constraint for hashed inputs.
     type Call = ();
-    type Sink = ();
 
     #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
@@ -62,12 +56,7 @@ impl<'a, T: Hash> Input<'a> for T {
     }
 
     #[inline]
-    fn retrack(
-        &mut self,
-        _: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
-        _: &'a Bump,
-    ) {
-    }
+    fn retrack(&mut self, _: impl Sink<Self::Call> + Copy + 'a, _: &'a Bump) {}
 }
 
 impl<'a, T> Input<'a> for Tracked<'a, T>
@@ -76,7 +65,6 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Call = T::Call;
-    type Sink = ();
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -103,19 +91,8 @@ where
     }
 
     #[inline]
-    fn retrack(
-        &mut self,
-        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
-        b: &'a Bump,
-    ) {
-        // let prev = self.sink;
-        // self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
-        //     if sink(c.clone(), hash)
-        //         && let Some(prev) = prev
-        //     {
-        //         prev(c, hash);
-        //     }
-        // }));
+    fn retrack(&mut self, sink: impl Sink<Self::Call> + Copy + 'a, b: &'a Bump) {
+        self.sink = Some(b.alloc(TrackedSink { prev: self.sink, sink }));
     }
 }
 
@@ -125,7 +102,6 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Call = T::Call;
-    type Sink = ();
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -149,19 +125,29 @@ where
     }
 
     #[inline]
-    fn retrack(
-        &mut self,
-        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
-        b: &'a Bump,
-    ) {
-        // let prev = self.sink;
-        // self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
-        //     if sink(c.clone(), hash)
-        //         && let Some(prev) = prev
-        //     {
-        //         prev(c, hash);
-        //     }
-        // }));
+    fn retrack(&mut self, sink: impl Sink<Self::Call> + Copy + 'a, b: &'a Bump) {
+        self.sink = Some(b.alloc(TrackedSink { prev: self.sink, sink }));
+    }
+}
+
+struct TrackedSink<'a, C, S> {
+    prev: Option<&'a dyn Sink<C>>,
+    sink: S,
+}
+
+impl<'a, C, S> Sink<C> for TrackedSink<'a, C, S>
+where
+    C: Call,
+    S: Sink<C>,
+{
+    fn emit(&self, call: C, ret: u128) -> bool {
+        if self.sink.emit(call.clone(), ret)
+            && let Some(prev) = self.prev
+        {
+            prev.emit(call, ret)
+        } else {
+            true
+        }
     }
 }
 
@@ -174,7 +160,6 @@ macro_rules! multi {
         const _: () = {
             impl<'a, $($param: Input<'a>),*> Input<'a> for Multi<($($param,)*)> {
                 type Call = MultiCall<$($param::Call),*>;
-                type Sink = ($($param::Sink,)*);
 
                 #[inline]
                 fn key<T: Hasher>(&self, state: &mut T) {
@@ -198,13 +183,13 @@ macro_rules! multi {
                 #[inline]
                 fn retrack(
                     &mut self,
-                    sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
+                    sink: impl Sink<Self::Call> + Copy + 'a,
                     bump: &'a Bump,
                 ) {
-                    $((self.0).$idx.retrack(
-                        move |call, hash| sink(MultiCall::$param(call), hash),
-                        bump,
-                    );)*
+                    // $((self.0).$idx.retrack(
+                    //     // move |call, hash| sink.emit(MultiCall::$param(call), hash),
+                    //     bump,
+                    // );)*
                 }
             }
 
@@ -221,6 +206,14 @@ macro_rules! multi {
                     }
                 }
             }
+
+            // struct Foo;
+
+            // impl Sink for Foo {
+            //     fn emit(&self, call: C, ret: u128) -> bool {
+            //         self.0.emit(MultiCall::$param(call), ret)
+            //     }
+            // }
         };
     };
 }
@@ -238,3 +231,20 @@ multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
 multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
 multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
 multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
+
+// pub enum MultiCall<A, B> {
+//     A(A),
+//     B(B),
+// }
+
+// struct Foo<S>(S);
+
+// impl<A, B, C, S> Sink<C> for Foo<S>
+// where
+//     C: Call,
+//     S: Sink<MultiCall<A, B>>,
+// {
+//     fn emit(&self, call: B, ret: u128) -> bool {
+//         self.0.emit(MultiCall::B(call), ret)
+//     }
+// }

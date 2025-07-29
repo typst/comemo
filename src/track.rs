@@ -5,7 +5,7 @@ use crate::accelerate;
 use crate::call::Call;
 
 /// A sink to which tracked calls can be sent.
-pub trait Sink<C: Call>: Send + Sync {
+pub trait Sink<C>: Send + Sync {
     /// Emit a call and its return hash to the sink.
     ///
     /// Returns whether the call was handled. If `false`, the call was
