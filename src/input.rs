@@ -171,157 +171,91 @@ where
 /// Wrapper for multiple inputs.
 pub struct Multi<T>(pub T);
 
-#[expect(unused)]
 macro_rules! multi {
-    ($($param:tt $alt:tt $idx:tt),*) => {
+    (@inner $($param:ident $alt:ident $idx:tt),*; $params:tt) => {
+        impl<'a, $($param: Input<'a>),*> Input<'a> for Multi<($($param,)*)> {
+            type Call = MultiCall<$($param::Call),*>;
+            type Storage<S: Sink<Call = Self::Call> + 'a> =
+                ($($param::Storage<Redirect<$idx, S>>,)*);
+
+            #[inline]
+            fn key<T: Hasher>(&self, state: &mut T) {
+                $((self.0).$idx.key(state);)*
+            }
+
+            #[inline]
+            fn call(&self, call: Self::Call) -> u128 {
+                match call {
+                    $(MultiCall::$param($param) => (self.0).$idx.call($param)),*
+                }
+            }
+
+            #[inline]
+            fn call_mut(&mut self, call: Self::Call) -> u128 {
+                match call {
+                    $(MultiCall::$param($param) => (self.0).$idx.call_mut($param)),*
+                }
+            }
+
+            #[inline]
+            fn retrack<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+            where
+                S: Sink<Call = Self::Call> + Copy + 'a {
+                $((self.0).$idx.retrack(&mut storage.$idx, Redirect::<$idx, _>(sink));)*
+            }
+        }
+
+        #[derive(PartialEq, Clone, Hash)]
+        pub enum MultiCall<$($param),*> {
+            $($param($param),)*
+        }
+
+        impl<$($param: Call),*> Call for MultiCall<$($param),*> {
+            #[inline]
+            fn is_mutable(&self) -> bool {
+                match *self {
+                    $(Self::$param(ref $param) => $param.is_mutable(),)*
+                }
+            }
+        }
+
+        #[derive(Copy, Clone)]
+        pub struct Redirect<const I: usize, S>(S);
+
+        $(multi!(@redirect $param $idx; $params);)*
+    };
+
+    (@redirect $pick:ident $idx:tt; ($($param:ident),*)) => {
+        impl<S, $($param),*> Sink for Redirect<$idx, S>
+        where
+            S: Sink<Call = MultiCall<$($param),*>>,
+        {
+            type Call = $pick;
+
+            fn emit(&self, call: $pick, ret: u128) -> bool {
+                self.0.emit(MultiCall::$pick(call), ret)
+            }
+        }
+    };
+
+    ($($param:ident $alt:ident $idx:tt),*) => {
         #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
         const _: () = {
-            impl<'a, $($param: Input<'a>),*> Input<'a> for Multi<($($param,)*)> {
-                type Call = MultiCall<$($param::Call),*>;
-
-                #[inline]
-                fn key<T: Hasher>(&self, state: &mut T) {
-                    $((self.0).$idx.key(state);)*
-                }
-
-                #[inline]
-                fn call(&self, call: Self::Call) -> u128 {
-                    match call {
-                        $(MultiCall::$param($param) => (self.0).$idx.call($param)),*
-                    }
-                }
-
-                #[inline]
-                fn call_mut(&mut self, call: Self::Call) -> u128 {
-                    match call {
-                        $(MultiCall::$param($param) => (self.0).$idx.call_mut($param)),*
-                    }
-                }
-
-                #[inline]
-                fn retrack(
-                    &mut self,
-                    sink: impl Sink<Call = Self::Call> + Copy + 'a,
-                    bump: &'a Bump,
-                ) {
-                    $((self.0).$idx.retrack(
-                        Redirect::<_, $idx>(sink),
-                        // move |call, hash| sink.emit(MultiCall::$param(call), hash),
-                        bump,
-                    );)*
-                }
-            }
-
-            #[derive(PartialEq, Clone, Hash)]
-            pub enum MultiCall<$($param),*> {
-                $($param($param),)*
-            }
-
-            impl<$($param: Call),*> Call for MultiCall<$($param),*> {
-                #[inline]
-                fn is_mutable(&self) -> bool {
-                    match *self {
-                        $(Self::$param(ref $param) => $param.is_mutable(),)*
-                    }
-                }
-            }
-
-            // struct Foo;
-
-            // impl Sink for Foo {
-            //     fn emit(&self, call: C, ret: u128) -> bool {
-            //         self.0.emit(MultiCall::$param(call), ret)
-            //     }
-            // }
+            multi!(@inner $($param $alt $idx),*; ($($param),*));
         };
     };
 }
 
-// multi! {}
-// multi! { A Z 0 }
-// multi! { A Z 0, B Y 1 }
-// multi! { A Z 0, B Y 1, C X 2 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
-// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
-
-#[allow(unused_variables, clippy::unused_unit, non_snake_case)]
-const _: () = {
-    impl<'a, A: Input<'a>, B: Input<'a>> Input<'a> for Multi<(A, B)> {
-        type Call = MultiCall<A::Call, B::Call>;
-        type Storage<S: Sink<Call = Self::Call> + 'a> =
-            (A::Storage<Redirect<0, S>>, B::Storage<Redirect<1, S>>);
-
-        #[inline]
-        fn key<T: Hasher>(&self, state: &mut T) {
-            (self.0).0.key(state);
-            (self.0).1.key(state);
-        }
-        #[inline]
-        fn call(&self, call: Self::Call) -> u128 {
-            match call {
-                MultiCall::A(A) => (self.0).0.call(A),
-                MultiCall::B(B) => (self.0).1.call(B),
-            }
-        }
-        #[inline]
-        fn call_mut(&mut self, call: Self::Call) -> u128 {
-            match call {
-                MultiCall::A(A) => (self.0).0.call_mut(A),
-                MultiCall::B(B) => (self.0).1.call_mut(B),
-            }
-        }
-        fn retrack<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
-        where
-            S: Sink<Call = Self::Call> + Copy + 'a,
-        {
-            (self.0).0.retrack(&mut storage.0, Redirect::<0, _>(sink));
-            (self.0).1.retrack(&mut storage.1, Redirect::<1, _>(sink));
-        }
-    }
-    #[derive(PartialEq, Clone, Hash)]
-    pub enum MultiCall<A, B> {
-        A(A),
-        B(B),
-    }
-    impl<A: Call, B: Call> Call for MultiCall<A, B> {
-        #[inline]
-        fn is_mutable(&self) -> bool {
-            match *self {
-                Self::A(ref A) => A.is_mutable(),
-                Self::B(ref B) => B.is_mutable(),
-            }
-        }
-    }
-
-    #[derive(Copy, Clone)]
-    pub struct Redirect<const I: usize, S>(S);
-
-    impl<S, A, B> Sink for Redirect<0, S>
-    where
-        S: Sink<Call = MultiCall<A, B>>,
-    {
-        type Call = A;
-
-        fn emit(&self, call: A, ret: u128) -> bool {
-            self.0.emit(MultiCall::A(call), ret)
-        }
-    }
-
-    impl<S, A, B> Sink for Redirect<1, S>
-    where
-        S: Sink<Call = MultiCall<A, B>>,
-    {
-        type Call = B;
-
-        fn emit(&self, call: B, ret: u128) -> bool {
-            self.0.emit(MultiCall::B(call), ret)
-        }
-    }
-};
+multi! {}
+multi! { A Z 0 }
+multi! { A Z 0, B Y 1 }
+multi! { A Z 0, B Y 1, C X 2 }
+multi! { A Z 0, B Y 1, C X 2, D W 3 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
