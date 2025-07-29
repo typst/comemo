@@ -122,6 +122,7 @@ fn process(function: &Function) -> Result<TokenStream> {
         Argument::Receiver(_) => quote! { () },
         Argument::Ident(ty, _, _) => quote! { #ty },
     });
+    #[expect(unused)]
     let arg_ty_tuple = quote! { (#(#arg_tys,)*) };
 
     // Construct a tuple for all parameters.
@@ -147,21 +148,16 @@ fn process(function: &Function) -> Result<TokenStream> {
     let enabled = function.enabled.clone().unwrap_or(parse_quote! { true });
 
     wrapped.block = parse_quote! { {
-        static __CACHE: ::comemo::internal::Cache<
-            <::comemo::internal::Multi<#arg_ty_tuple> as ::comemo::internal::Input>::Call,
-            #output,
-        > = ::comemo::internal::Cache::new(|| {
-            ::comemo::internal::register_evictor(|max_age| __CACHE.evict(max_age));
-            ::core::default::Default::default()
-        });
-
         #(#bounds;)*
 
         ::comemo::internal::memoized(
             ::comemo::internal::Multi(#arg_tuple),
             &mut ::core::default::Default::default(),
             &::core::default::Default::default(),
-            &__CACHE,
+            {
+                struct __ComemoId;
+                ::core::any::TypeId::of::<__ComemoId>()
+            },
             #enabled,
             #closure,
         )

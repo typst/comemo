@@ -1,3 +1,5 @@
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -46,18 +48,41 @@ impl<C: Call> Sink for &Mutex<Recording<C>> {
     }
 }
 
+static CACHES: LazyLock<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn get_cache<C: Send + Sync + 'static, Out: Send + Sync + 'static>(
+    id: TypeId,
+) -> &'static Cache<C, Out> {
+    let ptr: *const (dyn Any + Send + Sync) = if let Some(boxed) = CACHES.read().get(&id)
+    {
+        &**boxed as _
+    } else {
+        let mut borrowed = CACHES.write();
+        let boxed = borrowed.entry(id).or_insert_with(|| {
+            Box::new(Cache::<C, Out>::new()) as Box<dyn Any + Send + Sync>
+        });
+        &**boxed as _
+    };
+
+    unsafe { &*ptr as &'static (dyn Any + Send + Sync) }
+        .downcast_ref::<Cache<C, Out>>()
+        .unwrap()
+}
+
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
     mut input: In,
     storage: &'c mut In::Storage<&'c Mutex<Recording<In::Call>>>,
     sink: &'c Mutex<Recording<In::Call>>,
-    cache: &Cache<In::Call, Out>,
+    id: TypeId,
     enabled: bool,
     func: F,
 ) -> Out
 where
     In: Input<'c>,
-    Out: Clone + 'static,
+    In::Call: 'static,
+    Out: Clone + Send + Sync + 'static,
     F: FnOnce(In) -> Out,
 {
     // Early bypass if memoization is disabled.
@@ -72,6 +97,8 @@ where
 
         return output;
     }
+
+    let cache = get_cache::<In::Call, Out>(id);
 
     // Compute the hash of the input's key part.
     let key = {
@@ -145,18 +172,26 @@ pub fn last_was_hit() -> bool {
 }
 
 /// A cache for a single memoized function.
-pub struct Cache<C, Out>(LazyLock<RwLock<CacheInner<C, Out>>>);
+pub struct Cache<C, Out>(RwLock<CacheInner<C, Out>>);
 
-impl<C: Call, Out: 'static> Cache<C, Out> {
+impl<C, Out: 'static> Cache<C, Out> {
     /// Create an empty cache.
     ///
     /// It must take an initialization function because the `evict` fn
     /// pointer cannot be passed as an argument otherwise the function
     /// passed to `Lazy::new` is a closure and not a function pointer.
-    pub const fn new(init: fn() -> RwLock<CacheInner<C, Out>>) -> Self {
-        Self(LazyLock::new(init))
+    pub fn new() -> Self {
+        Self(RwLock::new(Default::default()))
     }
+}
 
+impl<C, Out: 'static> Default for Cache<C, Out> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C: Call, Out: 'static> Cache<C, Out> {
     /// Evict all entries whose age is larger than or equal to `max_age`.
     pub fn evict(&self, max_age: usize) {
         self.0.write().evict(max_age);
