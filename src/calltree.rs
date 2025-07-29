@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 
+use fxhash::FxHashMap;
 use slab::Slab;
 
 /// A deduplicated sequence of calls to tracked functions.
@@ -13,7 +13,7 @@ pub struct CallSequence<C> {
     /// The raw calls. In order, but deduplicated via the `map`.
     vec: Vec<Option<(C, u128)>>,
     /// A map from hashes of calls to the indices in the vector.
-    map: HashMap<u128, usize>,
+    map: FxHashMap<u128, usize>,
     /// A cursor for iteration in `Self::next`.
     cursor: usize,
 }
@@ -21,7 +21,11 @@ pub struct CallSequence<C> {
 impl<C> CallSequence<C> {
     /// Creates an empty sequence.
     pub fn new() -> Self {
-        Self { vec: Vec::new(), map: HashMap::new(), cursor: 0 }
+        Self {
+            vec: Vec::new(),
+            map: FxHashMap::default(),
+            cursor: 0,
+        }
     }
 }
 
@@ -103,11 +107,11 @@ pub struct CallTree<C, T> {
     /// Leaf nodes, directly storing outputs.
     leaves: Slab<LeafNode<T>>,
     /// The initial node for the given key hash.
-    start: HashMap<u128, NodeId>,
+    start: FxHashMap<u128, NodeId>,
     /// Maps from parent nodes to child nodes. The key is a pair of an inner
     /// node ID and a return hash for that call. The value is the node to
     /// transition to.
-    edges: HashMap<(InnerId, u128), NodeId>,
+    edges: FxHashMap<(InnerId, u128), NodeId>,
 }
 
 /// An inner node in the call tree.
@@ -135,8 +139,8 @@ impl<C, T> CallTree<C, T> {
         Self {
             inner: Slab::new(),
             leaves: Slab::new(),
-            edges: HashMap::new(),
-            start: HashMap::new(),
+            edges: FxHashMap::default(),
+            start: FxHashMap::default(),
         }
     }
 }
@@ -459,7 +463,7 @@ mod tests {
         T: Debug + PartialEq + Clone,
     {
         let mut tree = CallTree::new();
-        let mut kept = Vec::<(u128, HashMap<C, u128>, T)>::new();
+        let mut kept = Vec::<(u128, FxHashMap<C, u128>, T)>::new();
         let mut ignore_insert_errors = false;
 
         for op in ops {
