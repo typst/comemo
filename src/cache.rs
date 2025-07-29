@@ -1,5 +1,4 @@
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -48,8 +47,8 @@ impl<C: Call> Sink for &Mutex<Recording<C>> {
     }
 }
 
-static CACHES: LazyLock<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+static CACHES: LazyLock<RwLock<fxhash::FxHashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
+    LazyLock::new(|| RwLock::new(fxhash::FxHashMap::default()));
 
 fn get_cache<C: Send + Sync + 'static, Out: Send + Sync + 'static>(
     id: TypeId,

@@ -47,6 +47,7 @@ comemo-macros = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 siphasher = { workspace = true }
 slab = { workspace = true }
+fxhash = "*"
 
 [dev-dependencies]
 quickcheck = { workspace = true }
