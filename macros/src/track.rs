@@ -245,37 +245,8 @@ fn create(
     impl_params_t.params.push(t.clone());
     type_params_t.params.push(t.clone());
 
-    // Prepare validations.
     let prefix = trait_.as_ref().map(|name| quote! { #name for });
-    let validations: Vec<_> = methods.iter().map(create_validation).collect();
-    let validate = if !methods.is_empty() {
-        quote! {
-            let mut this = #maybe_cloned;
-            constraint.validate(|call| match &call.0 { #(#validations,)* })
-        }
-    } else {
-        quote! { true }
-    };
-    let validate_with_id = if !methods.is_empty() {
-        quote! {
-            let mut this = #maybe_cloned;
-            constraint.validate_with_id(
-                |call| match &call.0 { #(#validations,)* },
-                id,
-            )
-        }
-    } else {
-        quote! { true }
-    };
-
-    // Prepare replying.
-    let immutable = methods.iter().all(|m| !m.mutable);
-    let replays = methods.iter().map(create_replay);
-    let replay = (!immutable).then(|| {
-        quote! {
-            constraint.replay(|call| match &call.0 { #(#replays,)* });
-        }
-    });
+    let calls: Vec<_> = methods.iter().map(create_call).collect();
 
     // Prepare variants and wrapper methods.
     let wrapper_methods = methods
@@ -284,32 +255,20 @@ fn create(
         .map(|m| create_wrapper(m, false));
     let wrapper_methods_mut = methods.iter().map(|m| create_wrapper(m, true));
 
-    let constraint = if immutable {
-        quote! { ImmutableConstraint }
-    } else {
-        quote! { MutableConstraint }
-    };
-
     Ok(quote! {
-        impl #impl_params ::comemo::Track for #ty #where_clause {}
-
-        impl #impl_params ::comemo::Validate for #ty #where_clause {
-            type Constraint = ::comemo::internal::#constraint<__ComemoCall>;
+        impl #impl_params ::comemo::Track for #ty #where_clause {
+            type Call = __ComemoCall;
 
             #[inline]
-            fn validate(&self, constraint: &Self::Constraint) -> bool {
-                #validate
+            fn call(&self, call: Self::Call) -> u128 {
+                let mut this = #maybe_cloned;
+                match call.0 { #(#calls,)* }
             }
 
             #[inline]
-            fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool {
-                #validate_with_id
-            }
-
-            #[inline]
-            #[allow(unused_variables)]
-            fn replay(&mut self, constraint: &Self::Constraint) {
-                #replay
+            fn call_mut(&mut self, call: Self::Call) -> u128 {
+                let mut this = self;
+                match call.0 { #(#calls,)* }
             }
         }
 
@@ -371,7 +330,7 @@ fn create_variant(method: &Method) -> TokenStream {
 }
 
 /// Produce a constraint validation for a method.
-fn create_validation(method: &Method) -> TokenStream {
+fn create_call(method: &Method) -> TokenStream {
     let name = &method.sig.ident;
     let args = &method.args;
     let prepared = method.args.iter().zip(&method.kinds).map(|(arg, kind)| match kind {
@@ -379,25 +338,9 @@ fn create_validation(method: &Method) -> TokenStream {
         Kind::Reference => quote! { #arg },
     });
     quote! {
-        __ComemoVariant::#name(#(#args),*)
+        __ComemoVariant::#name(#(ref #args),*)
             => ::comemo::internal::hash(&this.#name(#(#prepared),*))
     }
-}
-
-/// Produce a constraint validation for a method.
-fn create_replay(method: &Method) -> TokenStream {
-    let name = &method.sig.ident;
-    let args = &method.args;
-    let prepared = method.args.iter().zip(&method.kinds).map(|(arg, kind)| match kind {
-        Kind::Normal => quote! { #arg.to_owned() },
-        Kind::Reference => quote! { #arg },
-    });
-    let body = method.mutable.then(|| {
-        quote! {
-            self.#name(#(#prepared),*);
-        }
-    });
-    quote! { __ComemoVariant::#name(#(#args),*) => { #body } }
 }
 
 /// Produce a wrapped surface method.
@@ -417,16 +360,18 @@ fn create_wrapper(method: &Method, tracked_mut: bool) -> TokenStream {
         #[track_caller]
         #[inline]
         #vis #sig {
-            let __comemo_variant = __ComemoVariant::#name(#(#args.to_owned()),*);
-            let (__comemo_value, __comemo_constraint) = ::comemo::internal::#to_parts;
-            let output = __comemo_value.#name(#(#args,)*);
-            if let Some(constraint) = __comemo_constraint {
-                constraint.push(
+            let (__comemo_value, __comemo_sink) = ::comemo::internal::#to_parts;
+            if let Some(__comemo_sink) = __comemo_sink {
+                let __comemo_variant = __ComemoVariant::#name(#(#args.to_owned()),*);
+                let output = __comemo_value.#name(#(#args,)*);
+                __comemo_sink(
                     __ComemoCall(__comemo_variant),
                     ::comemo::internal::hash(&output),
                 );
+                output
+            } else {
+                __comemo_value.#name(#(#args,)*)
             }
-            output
         }
     }
 }

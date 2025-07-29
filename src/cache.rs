@@ -1,12 +1,13 @@
-use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use parking_lot::RwLock;
+use bumpalo::Bump;
+use parking_lot::{Mutex, RwLock};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
-use crate::constraint::Join;
+use crate::call::Call;
+use crate::calltree::{CallSequence, CallTree, InsertError};
 use crate::input::Input;
 
 /// The global list of eviction functions.
@@ -18,21 +19,38 @@ thread_local! {
     static LAST_WAS_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+pub struct Recording<C> {
+    immutable: CallSequence<C>,
+    mutable: Vec<C>,
+}
+
+impl<C> Default for Recording<C> {
+    fn default() -> Self {
+        Self {
+            immutable: CallSequence::new(),
+            mutable: Vec::new(),
+        }
+    }
+}
+
 /// Execute a function or use a cached result for it.
-pub fn memoized<'a, In, Out, F>(
+pub fn memoized<'c, In, Out, F>(
     mut input: In,
-    constraint: &'a In::Constraint,
-    cache: &Cache<In::Constraint, Out>,
+    list: &'c Mutex<Recording<In::Call>>,
+    bump: &'c Bump,
+    cache: &Cache<In::Call, Out>,
     enabled: bool,
     func: F,
 ) -> Out
 where
-    In: Input<'a>,
+    In: Input<'c>,
     Out: Clone + 'static,
     F: FnOnce(In) -> Out,
 {
     // Early bypass if memoization is disabled.
+    // Hopefully the compiler will optimize this away, if the condition is constant.
     if !enabled {
+        // Execute the function with the new constraints hooked in.
         let output = func(input);
 
         // Ensure that the last call was a miss during testing.
@@ -50,34 +68,44 @@ where
     };
 
     // Check if there is a cached output.
-    let borrow = cache.0.read();
-    if let Some((constrained, value)) = borrow.lookup::<In>(key, &input) {
-        // Replay the mutations.
-        input.replay(constrained);
+    if let Some(entry) = cache.0.read().lookup::<In>(key, &input) {
+        entry.age.store(0, Ordering::SeqCst);
 
-        // Add the cached constraints to the outer ones.
-        input.retrack(constraint).1.join(constrained);
+        // Replay mutations.
+        for call in &entry.mutable {
+            input.call_mut(call.clone());
+        }
 
         #[cfg(feature = "testing")]
         LAST_WAS_HIT.with(|cell| cell.set(true));
 
-        return value.clone();
+        return entry.output.clone();
     }
 
-    // Release the borrow so that nested memoized calls can access the
-    // cache without dead locking.
-    drop(borrow);
-
     // Execute the function with the new constraints hooked in.
-    let (input, outer) = input.retrack(constraint);
-    let output = func(input);
-
-    // Add the new constraints to the outer ones.
-    outer.join(constraint);
+    let sink = |call: In::Call, hash: u128| {
+        if call.is_mutable() {
+            list.lock().mutable.push(call);
+            true
+        } else {
+            list.lock().immutable.insert(call, hash)
+        }
+    };
+    let output = func(input.retrack(sink, bump));
+    let list = std::mem::take(&mut *list.lock());
 
     // Insert the result into the cache.
-    let mut borrow = cache.0.write();
-    borrow.insert::<In>(key, constraint.take(), output.clone());
+    match cache.0.write().insert::<In>(key, list, output.clone()) {
+        Ok(()) => {}
+        Err(InsertError::AlreadyExists) => {
+            // A concurrent call with the same arguments can have inserted
+            // a result in the meantime.
+        }
+        Err(InsertError::MissingCall) => {
+            #[cfg(debug_assertions)]
+            panic!("comemo: cached function is non-deterministic");
+        }
+    }
 
     #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
@@ -111,100 +139,83 @@ pub fn last_was_hit() -> bool {
 }
 
 /// A cache for a single memoized function.
-pub struct Cache<C, Out>(LazyLock<RwLock<CacheData<C, Out>>>);
+pub struct Cache<C, Out>(LazyLock<RwLock<CacheInner<C, Out>>>);
 
-impl<C: 'static, Out: 'static> Cache<C, Out> {
+impl<C: Call, Out: 'static> Cache<C, Out> {
     /// Create an empty cache.
     ///
     /// It must take an initialization function because the `evict` fn
     /// pointer cannot be passed as an argument otherwise the function
     /// passed to `Lazy::new` is a closure and not a function pointer.
-    pub const fn new(init: fn() -> RwLock<CacheData<C, Out>>) -> Self {
+    pub const fn new(init: fn() -> RwLock<CacheInner<C, Out>>) -> Self {
         Self(LazyLock::new(init))
     }
 
     /// Evict all entries whose age is larger than or equal to `max_age`.
     pub fn evict(&self, max_age: usize) {
-        self.0.write().evict(max_age)
+        self.0.write().evict(max_age);
     }
 }
 
-/// The internal data for a cache.
-pub struct CacheData<C, Out> {
+/// The data for a cache.
+pub struct CacheInner<C, Out> {
     /// Maps from hashes to memoized results.
-    entries: HashMap<u128, Vec<CacheEntry<C, Out>>>,
-}
-
-impl<C, Out: 'static> CacheData<C, Out> {
-    /// Evict all entries whose age is larger than or equal to `max_age`.
-    fn evict(&mut self, max_age: usize) {
-        self.entries.retain(|_, entries| {
-            entries.retain_mut(|entry| {
-                let age = entry.age.get_mut();
-                *age += 1;
-                *age <= max_age
-            });
-            !entries.is_empty()
-        });
-    }
-
-    /// Look for a matching entry in the cache.
-    fn lookup<'a, In>(&self, key: u128, input: &In) -> Option<(&In::Constraint, &Out)>
-    where
-        In: Input<'a, Constraint = C>,
-    {
-        self.entries
-            .get(&key)?
-            .iter()
-            .rev()
-            .find_map(|entry| entry.lookup::<In>(input))
-    }
-
-    /// Insert an entry into the cache.
-    fn insert<'a, In>(&mut self, key: u128, constraint: In::Constraint, output: Out)
-    where
-        In: Input<'a, Constraint = C>,
-    {
-        self.entries
-            .entry(key)
-            .or_default()
-            .push(CacheEntry::new::<In>(constraint, output));
-    }
-}
-
-impl<C, Out> Default for CacheData<C, Out> {
-    fn default() -> Self {
-        Self { entries: HashMap::new() }
-    }
+    tree: CallTree<C, CacheEntry<C, Out>>,
 }
 
 /// A memoized result.
 struct CacheEntry<C, Out> {
-    /// The memoized function's constraint.
-    constraint: C,
     /// The memoized function's output.
     output: Out,
+    /// Mutable tracked calls that must be replayed.
+    mutable: Vec<C>,
     /// How many evictions have passed since the entry has been last used.
     age: AtomicUsize,
 }
 
-impl<C, Out: 'static> CacheEntry<C, Out> {
-    /// Create a new entry.
-    fn new<'a, In>(constraint: In::Constraint, output: Out) -> Self
+impl<C: Call, Out: 'static> CacheInner<C, Out> {
+    /// Look for a matching entry in the cache.
+    fn lookup<'c, In>(&self, key: u128, input: &In) -> Option<&CacheEntry<C, Out>>
     where
-        In: Input<'a, Constraint = C>,
+        In: Input<'c, Call = C>,
     {
-        Self { constraint, output, age: AtomicUsize::new(0) }
+        self.tree.get(key, |c| input.call(c.clone()))
     }
 
-    /// Return the entry's output if it is valid for the given input.
-    fn lookup<'a, In>(&self, input: &In) -> Option<(&In::Constraint, &Out)>
+    /// Insert an entry into the cache.
+    #[allow(clippy::extra_unused_type_parameters, reason = "false positive")]
+    fn insert<'c, In>(
+        &mut self,
+        key: u128,
+        recording: Recording<C>,
+        output: Out,
+    ) -> Result<(), InsertError>
     where
-        In: Input<'a, Constraint = C>,
+        In: Input<'c, Call = C>,
     {
-        input.validate(&self.constraint).then(|| {
-            self.age.store(0, Ordering::SeqCst);
-            (&self.constraint, &self.output)
-        })
+        self.tree.insert(
+            key,
+            recording.immutable,
+            CacheEntry {
+                output,
+                mutable: recording.mutable,
+                age: AtomicUsize::new(0),
+            },
+        )
+    }
+
+    /// Evict all entries whose age is larger than or equal to `max_age`.
+    fn evict(&mut self, max_age: usize) {
+        self.tree.retain(|entry| {
+            let age = entry.age.get_mut();
+            *age += 1;
+            *age <= max_age
+        });
+    }
+}
+
+impl<C, Out> Default for CacheInner<C, Out> {
+    fn default() -> Self {
+        Self { tree: CallTree::new() }
     }
 }

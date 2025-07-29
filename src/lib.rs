@@ -58,23 +58,29 @@ file accesses during a memoized call. As a result, we can reuse the result of a
 other files change.
 
 ```
-# /*
 use comemo::{memoize, track, Tracked};
 
 /// Evaluate a `.calc` script.
 #[memoize]
 fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
+    # /*
     ...
+    # */
+    # 0
 }
+
+# struct Files;
 
 #[track]
 impl Files {
     /// Read a file from storage.
     fn read(&self, path: &str) -> String {
+        # /*
         ...
+        # */
+        # String::new()
     }
 }
-# */
 ```
 
 For the full example see [`examples/calc.rs`][calc].
@@ -84,14 +90,16 @@ For the full example see [`examples/calc.rs`][calc].
 
 mod accelerate;
 mod cache;
-mod constraint;
+mod call;
+mod calltree;
 mod hash;
 mod input;
 mod track;
 
 pub use crate::cache::evict;
+pub use crate::call::Constraint;
 pub use crate::hash::Prehashed;
-pub use crate::track::{Track, Tracked, TrackedMut, Validate};
+pub use crate::track::{Track, Tracked, TrackedMut};
 
 #[cfg(feature = "macros")]
 pub use comemo_macros::{memoize, track};
@@ -99,14 +107,11 @@ pub use comemo_macros::{memoize, track};
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use parking_lot::RwLock;
-
-    pub use crate::cache::{Cache, CacheData, memoized, register_evictor};
-    pub use crate::constraint::{Call, ImmutableConstraint, MutableConstraint};
-    pub use crate::hash::hash;
-    pub use crate::input::{Args, Input, assert_hashable_or_trackable};
-    pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
-
     #[cfg(feature = "testing")]
     pub use crate::cache::last_was_hit;
+    pub use crate::cache::{Cache, memoized, register_evictor};
+    pub use crate::call::Call;
+    pub use crate::hash::hash;
+    pub use crate::input::{Input, Multi, assert_hashable_or_trackable};
+    pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
 }

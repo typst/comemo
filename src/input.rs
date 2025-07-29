@@ -1,43 +1,48 @@
 use std::hash::{Hash, Hasher};
 
-use crate::constraint::Join;
-use crate::track::{Track, Tracked, TrackedMut, Validate};
+use bumpalo::Bump;
+
+use crate::call::Call;
+use crate::track::{Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
 #[inline]
-pub fn assert_hashable_or_trackable<'a, In: Input<'a>>(_: &In) {}
+pub fn assert_hashable_or_trackable<'c, In: Input<'c>>(_: &In) {}
 
 /// An input to a cached function.
 ///
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
 pub trait Input<'a> {
-    /// The constraints for this input.
-    type Constraint: Default + Clone + Join + 'static;
+    /// An enumeration of possible tracked calls that can be performed on any
+    /// tracked part of this input.
+    type Call: Call;
 
-    /// The extracted outer constraints.
-    type Outer: Join<Self::Constraint>;
-
-    /// Hash the key parts of the input.
+    /// Hashes the key (i.e. not tracked) parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
 
-    /// Validate the tracked parts of the input.
-    fn validate(&self, constraint: &Self::Constraint) -> bool;
+    /// Performs a call on a tracked part of the input and returns the hash of
+    /// the result. If the call is mutable, the side effect will not be
+    /// observable.
+    fn call(&self, call: Self::Call) -> u128;
 
-    /// Replay mutations to the input.
-    fn replay(&mut self, constraint: &Self::Constraint);
+    /// Perform a call on a tracked part of the input and returns the hash of
+    /// the result. If the call is mutable, the side effect will be
+    /// observable.
+    fn call_mut(&mut self, call: Self::Call) -> u128;
 
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
-    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer)
-    where
-        Self: Sized;
+    fn retrack(
+        self,
+        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
+        b: &'a Bump,
+    ) -> Self;
 }
 
 impl<'a, T: Hash> Input<'a> for T {
     // No constraint for hashed inputs.
-    type Constraint = ();
-    type Outer = ();
+    type Call = ();
 
     #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
@@ -45,16 +50,22 @@ impl<'a, T: Hash> Input<'a> for T {
     }
 
     #[inline]
-    fn validate(&self, _: &()) -> bool {
-        true
+    fn call(&self, _: Self::Call) -> u128 {
+        0
     }
 
     #[inline]
-    fn replay(&mut self, _: &Self::Constraint) {}
+    fn call_mut(&mut self, _: Self::Call) -> u128 {
+        0
+    }
 
     #[inline]
-    fn retrack(self, _: &'a ()) -> (Self, Self::Outer) {
-        (self, ())
+    fn retrack(
+        self,
+        _: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
+        _: &'a Bump,
+    ) -> Self {
+        self
     }
 }
 
@@ -63,28 +74,50 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = <T as Validate>::Constraint;
-    type Outer = Option<&'a Self::Constraint>;
+    type Call = T::Call;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate_with_id(constraint, self.id)
+    fn call(&self, call: Self::Call) -> u128 {
+        let hash = if let Some(accelerator) = crate::accelerate::get(self.id) {
+            let mut map = accelerator.lock();
+            let call_hash = crate::hash::hash(&call);
+            *map.entry(call_hash).or_insert_with(|| self.value.call(call.clone()))
+        } else {
+            self.value.call(call.clone())
+        };
+        if let Some(sink) = self.sink {
+            sink(call, hash)
+        }
+        hash
     }
 
     #[inline]
-    fn replay(&mut self, _: &Self::Constraint) {}
+    fn call_mut(&mut self, _: Self::Call) -> u128 {
+        // Cannot perform a mutable call on an immutable reference.
+        0
+    }
 
     #[inline]
-    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer) {
-        let tracked = Tracked {
+    fn retrack(
+        self,
+        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
+        b: &'a Bump,
+    ) -> Self {
+        let prev = self.sink;
+        Tracked {
             value: self.value,
-            constraint: Some(constraint),
             id: self.id,
-        };
-        (tracked, self.constraint)
+            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
+                if sink(c.clone(), hash)
+                    && let Some(prev) = prev
+                {
+                    prev(c, hash);
+                }
+            })),
+        }
     }
 }
 
@@ -93,89 +126,119 @@ where
     T: Track + ?Sized,
 {
     // Forward constraint from `Trackable` implementation.
-    type Constraint = T::Constraint;
-    type Outer = Option<&'a Self::Constraint>;
+    type Call = T::Call;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate(constraint)
+    fn call(&self, call: Self::Call) -> u128 {
+        let hash = self.value.call(call.clone());
+        if let Some(sink) = self.sink {
+            sink(call, hash)
+        }
+        hash
     }
 
     #[inline]
-    fn replay(&mut self, constraint: &Self::Constraint) {
-        self.value.replay(constraint);
+    fn call_mut(&mut self, call: Self::Call) -> u128 {
+        let hash = self.value.call_mut(call.clone());
+        if let Some(sink) = self.sink {
+            sink(call, hash)
+        }
+        hash
     }
 
     #[inline]
-    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer) {
-        let tracked = TrackedMut { value: self.value, constraint: Some(constraint) };
-        (tracked, self.constraint)
+    fn retrack(
+        self,
+        sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
+        b: &'a Bump,
+    ) -> Self {
+        let prev = self.sink;
+        TrackedMut {
+            value: self.value,
+            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
+                if sink(c.clone(), hash)
+                    && let Some(prev) = prev
+                {
+                    prev(c, hash);
+                }
+            })),
+        }
     }
 }
 
 /// Wrapper for multiple inputs.
-pub struct Args<T>(pub T);
+pub struct Multi<T>(pub T);
 
-macro_rules! args_input {
-    ($($param:tt $alt:tt $idx:tt ),*) => {
-        #[allow(unused_variables, non_snake_case)]
-        impl<'a, $($param: Input<'a>),*> Input<'a> for Args<($($param,)*)> {
-            type Constraint = ($($param::Constraint,)*);
-            type Outer = ($($param::Outer,)*);
+macro_rules! multi {
+    ($($param:tt $alt:tt $idx:tt),*) => {
+        #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
+        const _: () = {
+            impl<'a, $($param: Input<'a>),*> Input<'a> for Multi<($($param,)*)> {
+                type Call = MultiCall<$($param::Call),*>;
 
-            #[inline]
-            fn key<T: Hasher>(&self, state: &mut T) {
-                $((self.0).$idx.key(state);)*
+                #[inline]
+                fn key<T: Hasher>(&self, state: &mut T) {
+                    $((self.0).$idx.key(state);)*
+                }
+
+                #[inline]
+                fn call(&self, call: Self::Call) -> u128 {
+                    match call {
+                        $(MultiCall::$param($param) => (self.0).$idx.call($param)),*
+                    }
+                }
+
+                #[inline]
+                fn call_mut(&mut self, call: Self::Call) -> u128 {
+                    match call {
+                        $(MultiCall::$param($param) => (self.0).$idx.call_mut($param)),*
+                    }
+                }
+
+                #[inline]
+                fn retrack(
+                    self,
+                    sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
+                    bump: &'a Bump,
+                ) -> Self {
+                    $(let $param = (self.0).$idx.retrack(
+                        move |call, hash| sink(MultiCall::$param(call), hash),
+                        bump,
+                    );)*
+                    Multi(($($param,)*))
+                }
             }
 
-            #[inline]
-            fn validate(&self, constraint: &Self::Constraint) -> bool {
-                true $(&& (self.0).$idx.validate(&constraint.$idx))*
+            #[derive(PartialEq, Clone, Hash)]
+            pub enum MultiCall<$($param),*> {
+                $($param($param),)*
             }
 
-            #[inline]
-            fn replay(&mut self, constraint: &Self::Constraint) {
-                $((self.0).$idx.replay(&constraint.$idx);)*
+            impl<$($param: Call),*> Call for MultiCall<$($param),*> {
+                #[inline]
+                fn is_mutable(&self) -> bool {
+                    match *self {
+                        $(Self::$param(ref $param) => $param.is_mutable(),)*
+                    }
+                }
             }
-
-            #[inline]
-            fn retrack(
-                self,
-                constraint: &'a Self::Constraint,
-            ) -> (Self, Self::Outer) {
-                $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
-                (Args(($($param.0,)*)), ($($param.1,)*))
-            }
-        }
-
-        #[allow(unused_variables, clippy::unused_unit)]
-        impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
-            #[inline]
-            fn join(&self, constraint: &($($alt,)*)) {
-                $(self.$idx.join(&constraint.$idx);)*
-            }
-
-            #[inline]
-            fn take(&self) -> Self {
-                ($(self.$idx.take(),)*)
-            }
-        }
+        };
     };
 }
 
-args_input! {}
-args_input! { A Z 0 }
-args_input! { A Z 0, B Y 1 }
-args_input! { A Z 0, B Y 1, C X 2 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
+multi! {}
+multi! { A Z 0 }
+multi! { A Z 0, B Y 1 }
+multi! { A Z 0, B Y 1, C X 2 }
+multi! { A Z 0, B Y 1, C X 2, D W 3 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
