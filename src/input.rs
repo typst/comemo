@@ -1,7 +1,5 @@
 use std::hash::{Hash, Hasher};
 
-use bumpalo::Bump;
-
 use crate::call::Call;
 use crate::track::{Sink, Track, Tracked, TrackedMut};
 
@@ -17,6 +15,7 @@ pub trait Input<'a> {
     /// An enumeration of possible tracked calls that can be performed on any
     /// tracked part of this input.
     type Call: Call;
+    type Storage<S: Sink<Call = Self::Call> + 'a>: Default;
 
     /// Hashes the key (i.e. not tracked) parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
@@ -33,12 +32,15 @@ pub trait Input<'a> {
 
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
-    fn retrack(&mut self, sink: impl Sink<Call = Self::Call> + Copy + 'a, b: &'a Bump);
+    fn retrack<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+    where
+        S: Sink<Call = Self::Call> + Copy + 'a;
 }
 
 impl<'a, T: Hash> Input<'a> for T {
     // No constraint for hashed inputs.
     type Call = ();
+    type Storage<S: Sink<Call = Self::Call> + 'a> = ();
 
     #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
@@ -56,7 +58,11 @@ impl<'a, T: Hash> Input<'a> for T {
     }
 
     #[inline]
-    fn retrack(&mut self, _: impl Sink<Call = Self::Call> + Copy + 'a, _: &'a Bump) {}
+    fn retrack<S>(&mut self, _: &'a mut Self::Storage<S>, _: S)
+    where
+        S: Sink<Call = Self::Call> + Copy + 'a,
+    {
+    }
 }
 
 impl<'a, T> Input<'a> for Tracked<'a, T>
@@ -65,6 +71,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Call = T::Call;
+    type Storage<S: Sink<Call = Self::Call> + 'a> = Option<TrackedSink<'a, S>>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -91,8 +98,11 @@ where
     }
 
     #[inline]
-    fn retrack(&mut self, sink: impl Sink<Call = Self::Call> + Copy + 'a, b: &'a Bump) {
-        self.sink = Some(b.alloc(TrackedSink { prev: self.sink, sink }));
+    fn retrack<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+    where
+        S: Sink<Call = Self::Call> + 'a,
+    {
+        self.sink = Some(storage.insert(TrackedSink { prev: self.sink, sink }));
     }
 }
 
@@ -102,6 +112,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Call = T::Call;
+    type Storage<S: Sink<Call = Self::Call> + 'a> = Option<TrackedSink<'a, S>>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -125,18 +136,21 @@ where
     }
 
     #[inline]
-    fn retrack(&mut self, sink: impl Sink<Call = Self::Call> + Copy + 'a, b: &'a Bump) {
-        self.sink = Some(b.alloc(TrackedSink { prev: self.sink, sink }));
+    fn retrack<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+    where
+        S: Sink<Call = Self::Call> + Copy + 'a,
+    {
+        self.sink = Some(storage.insert(TrackedSink { prev: self.sink, sink }));
     }
 }
 
 #[derive(Copy, Clone)]
-struct TrackedSink<'a, C, S> {
-    prev: Option<&'a dyn Sink<Call = C>>,
+pub struct TrackedSink<'a, S: Sink> {
+    prev: Option<&'a dyn Sink<Call = S::Call>>,
     sink: S,
 }
 
-impl<'a, C, S> Sink for TrackedSink<'a, C, S>
+impl<'a, C, S> Sink for TrackedSink<'a, S>
 where
     C: Call,
     S: Sink<Call = C>,
@@ -157,6 +171,7 @@ where
 /// Wrapper for multiple inputs.
 pub struct Multi<T>(pub T);
 
+#[expect(unused)]
 macro_rules! multi {
     ($($param:tt $alt:tt $idx:tt),*) => {
         #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
@@ -240,6 +255,9 @@ macro_rules! multi {
 const _: () = {
     impl<'a, A: Input<'a>, B: Input<'a>> Input<'a> for Multi<(A, B)> {
         type Call = MultiCall<A::Call, B::Call>;
+        type Storage<S: Sink<Call = Self::Call> + 'a> =
+            (A::Storage<Redirect<0, S>>, B::Storage<Redirect<1, S>>);
+
         #[inline]
         fn key<T: Hasher>(&self, state: &mut T) {
             (self.0).0.key(state);
@@ -259,14 +277,12 @@ const _: () = {
                 MultiCall::B(B) => (self.0).1.call_mut(B),
             }
         }
-        #[inline]
-        fn retrack(
-            &mut self,
-            sink: impl Sink<Call = Self::Call> + Copy + 'a,
-            bump: &'a Bump,
-        ) {
-            (self.0).0.retrack(Redirect::<0, _>(sink), bump);
-            (self.0).1.retrack(Redirect::<1, _>(sink), bump);
+        fn retrack<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+        where
+            S: Sink<Call = Self::Call> + Copy + 'a,
+        {
+            (self.0).0.retrack(&mut storage.0, Redirect::<0, _>(sink));
+            (self.0).1.retrack(&mut storage.1, Redirect::<1, _>(sink));
         }
     }
     #[derive(PartialEq, Clone, Hash)]
@@ -285,7 +301,7 @@ const _: () = {
     }
 
     #[derive(Copy, Clone)]
-    struct Redirect<const I: usize, S>(S);
+    pub struct Redirect<const I: usize, S>(S);
 
     impl<S, A, B> Sink for Redirect<0, S>
     where

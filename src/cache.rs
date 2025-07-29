@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bumpalo::Bump;
 use parking_lot::{Mutex, RwLock};
 use siphasher::sip128::{Hasher128, SipHasher13};
 
@@ -50,8 +49,8 @@ impl<C: Call> Sink for &Mutex<Recording<C>> {
 /// Execute a function or use a cached result for it.
 pub fn memoized<'c, In, Out, F>(
     mut input: In,
+    storage: &'c mut In::Storage<&'c Mutex<Recording<In::Call>>>,
     sink: &'c Mutex<Recording<In::Call>>,
-    bump: &'c Bump,
     cache: &Cache<In::Call, Out>,
     enabled: bool,
     func: F,
@@ -97,7 +96,7 @@ where
     }
 
     // Execute the function with the new constraints hooked in.
-    input.retrack(sink, bump);
+    input.retrack(storage, sink);
     let output = func(input);
     let list = std::mem::take(&mut *sink.lock());
 
