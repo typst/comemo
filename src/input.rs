@@ -117,12 +117,12 @@ where
 }
 
 /// Wrapper for multiple inputs.
-pub struct Args<T>(pub T);
+pub struct Multi<T>(pub T);
 
-macro_rules! args_input {
+macro_rules! multi {
     ($($param:tt $alt:tt $idx:tt ),*) => {
         #[allow(unused_variables, non_snake_case)]
-        impl<'a, $($param: Input<'a>),*> Input<'a> for Args<($($param,)*)> {
+        impl<'a, $($param: Input<'a>),*> Input<'a> for Multi<($($param,)*)> {
             type Constraint = ($($param::Constraint,)*);
             type Outer = ($($param::Outer,)*);
 
@@ -147,7 +147,7 @@ macro_rules! args_input {
                 constraint: &'a Self::Constraint,
             ) -> (Self, Self::Outer) {
                 $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
-                (Args(($($param.0,)*)), ($($param.1,)*))
+                (Multi(($($param.0,)*)), ($($param.1,)*))
             }
         }
 
@@ -166,16 +166,16 @@ macro_rules! args_input {
     };
 }
 
-args_input! {}
-args_input! { A Z 0 }
-args_input! { A Z 0, B Y 1 }
-args_input! { A Z 0, B Y 1, C X 2 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
-args_input! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
+multi! {}
+multi! { A Z 0 }
+multi! { A Z 0, B Y 1 }
+multi! { A Z 0, B Y 1, C X 2 }
+multi! { A Z 0, B Y 1, C X 2, D W 3 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
+multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
