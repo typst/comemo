@@ -91,7 +91,9 @@ where
             list.lock().immutable.insert(call, hash)
         }
     };
-    let output = func(input.retrack(sink, bump));
+
+    input.retrack(sink, bump);
+    let output = func(input);
     let list = std::mem::take(&mut *list.lock());
 
     // Insert the result into the cache.

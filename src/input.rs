@@ -34,10 +34,10 @@ pub trait Input<'a> {
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
     fn retrack(
-        self,
+        &mut self,
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
         b: &'a Bump,
-    ) -> Self;
+    );
 }
 
 impl<'a, T: Hash> Input<'a> for T {
@@ -61,11 +61,10 @@ impl<'a, T: Hash> Input<'a> for T {
 
     #[inline]
     fn retrack(
-        self,
+        &mut self,
         _: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
         _: &'a Bump,
-    ) -> Self {
-        self
+    ) {
     }
 }
 
@@ -102,22 +101,18 @@ where
 
     #[inline]
     fn retrack(
-        self,
+        &mut self,
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
         b: &'a Bump,
-    ) -> Self {
+    ) {
         let prev = self.sink;
-        Tracked {
-            value: self.value,
-            id: self.id,
-            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
-                if sink(c.clone(), hash)
-                    && let Some(prev) = prev
-                {
-                    prev(c, hash);
-                }
-            })),
-        }
+        self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
+            if sink(c.clone(), hash)
+                && let Some(prev) = prev
+            {
+                prev(c, hash);
+            }
+        }));
     }
 }
 
@@ -151,21 +146,18 @@ where
 
     #[inline]
     fn retrack(
-        self,
+        &mut self,
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
         b: &'a Bump,
-    ) -> Self {
+    ) {
         let prev = self.sink;
-        TrackedMut {
-            value: self.value,
-            sink: Some(b.alloc(move |c: T::Call, hash: u128| {
-                if sink(c.clone(), hash)
-                    && let Some(prev) = prev
-                {
-                    prev(c, hash);
-                }
-            })),
-        }
+        self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
+            if sink(c.clone(), hash)
+                && let Some(prev) = prev
+            {
+                prev(c, hash);
+            }
+        }));
     }
 }
 
@@ -200,15 +192,14 @@ macro_rules! multi {
 
                 #[inline]
                 fn retrack(
-                    self,
+                    &mut self,
                     sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
                     bump: &'a Bump,
-                ) -> Self {
-                    $(let $param = (self.0).$idx.retrack(
+                ) {
+                    $((self.0).$idx.retrack(
                         move |call, hash| sink(MultiCall::$param(call), hash),
                         bump,
                     );)*
-                    Multi(($($param,)*))
                 }
             }
 
