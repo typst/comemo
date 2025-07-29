@@ -58,23 +58,29 @@ file accesses during a memoized call. As a result, we can reuse the result of a
 other files change.
 
 ```
-# /*
 use comemo::{memoize, track, Tracked};
 
 /// Evaluate a `.calc` script.
 #[memoize]
 fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
+    # /*
     ...
+    # */
+    # 0
 }
+
+# struct Files;
 
 #[track]
 impl Files {
     /// Read a file from storage.
     fn read(&self, path: &str) -> String {
+        # /*
         ...
+        # */
+        # String::new()
     }
 }
-# */
 ```
 
 For the full example see [`examples/calc.rs`][calc].
