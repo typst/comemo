@@ -113,5 +113,7 @@ pub mod internal {
     pub use crate::call::Call;
     pub use crate::hash::hash;
     pub use crate::input::{Input, Multi, assert_hashable_or_trackable};
-    pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
+    pub use crate::track::{
+        Sink, Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref,
+    };
 }

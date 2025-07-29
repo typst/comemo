@@ -364,7 +364,8 @@ fn create_wrapper(method: &Method, tracked_mut: bool) -> TokenStream {
             if let Some(__comemo_sink) = __comemo_sink {
                 let __comemo_variant = __ComemoVariant::#name(#(#args.to_owned()),*);
                 let output = __comemo_value.#name(#(#args,)*);
-                __comemo_sink(
+                ::comemo::internal::Sink::emit(
+                    __comemo_sink,
                     __ComemoCall(__comemo_variant),
                     ::comemo::internal::hash(&output),
                 );

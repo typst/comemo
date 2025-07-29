@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use bumpalo::Bump;
 
 use crate::call::Call;
-use crate::track::{Track, Tracked, TrackedMut};
+use crate::track::{Sink, Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
 #[inline]
@@ -17,6 +17,7 @@ pub trait Input<'a> {
     /// An enumeration of possible tracked calls that can be performed on any
     /// tracked part of this input.
     type Call: Call;
+    type Sink;
 
     /// Hashes the key (i.e. not tracked) parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
@@ -43,6 +44,7 @@ pub trait Input<'a> {
 impl<'a, T: Hash> Input<'a> for T {
     // No constraint for hashed inputs.
     type Call = ();
+    type Sink = ();
 
     #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
@@ -74,6 +76,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Call = T::Call;
+    type Sink = ();
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -88,7 +91,7 @@ where
             self.value.call(call.clone())
         };
         if let Some(sink) = self.sink {
-            sink(call, hash)
+            sink.emit(call, hash);
         }
         hash
     }
@@ -105,14 +108,14 @@ where
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
         b: &'a Bump,
     ) {
-        let prev = self.sink;
-        self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
-            if sink(c.clone(), hash)
-                && let Some(prev) = prev
-            {
-                prev(c, hash);
-            }
-        }));
+        // let prev = self.sink;
+        // self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
+        //     if sink(c.clone(), hash)
+        //         && let Some(prev) = prev
+        //     {
+        //         prev(c, hash);
+        //     }
+        // }));
     }
 }
 
@@ -122,6 +125,7 @@ where
 {
     // Forward constraint from `Trackable` implementation.
     type Call = T::Call;
+    type Sink = ();
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
@@ -130,7 +134,7 @@ where
     fn call(&self, call: Self::Call) -> u128 {
         let hash = self.value.call(call.clone());
         if let Some(sink) = self.sink {
-            sink(call, hash)
+            sink.emit(call, hash);
         }
         hash
     }
@@ -139,7 +143,7 @@ where
     fn call_mut(&mut self, call: Self::Call) -> u128 {
         let hash = self.value.call_mut(call.clone());
         if let Some(sink) = self.sink {
-            sink(call, hash)
+            sink.emit(call, hash);
         }
         hash
     }
@@ -150,14 +154,14 @@ where
         sink: impl Fn(Self::Call, u128) -> bool + Copy + Send + Sync + 'a,
         b: &'a Bump,
     ) {
-        let prev = self.sink;
-        self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
-            if sink(c.clone(), hash)
-                && let Some(prev) = prev
-            {
-                prev(c, hash);
-            }
-        }));
+        // let prev = self.sink;
+        // self.sink = Some(b.alloc(move |c: T::Call, hash: u128| {
+        //     if sink(c.clone(), hash)
+        //         && let Some(prev) = prev
+        //     {
+        //         prev(c, hash);
+        //     }
+        // }));
     }
 }
 
@@ -170,6 +174,7 @@ macro_rules! multi {
         const _: () = {
             impl<'a, $($param: Input<'a>),*> Input<'a> for Multi<($($param,)*)> {
                 type Call = MultiCall<$($param::Call),*>;
+                type Sink = ($($param::Sink,)*);
 
                 #[inline]
                 fn key<T: Hasher>(&self, state: &mut T) {
