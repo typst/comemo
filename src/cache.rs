@@ -32,9 +32,14 @@ where
     F: FnOnce(In) -> Out,
 {
     // Early bypass if memoization is disabled.
-    // Hopefully the compiler will optimize this away, if the condition is constant.
     if !enabled {
-        return memoized_disabled(input, constraint, func);
+        let output = func(input);
+
+        // Ensure that the last call was a miss during testing.
+        #[cfg(feature = "testing")]
+        LAST_WAS_HIT.with(|cell| cell.set(false));
+
+        return output;
     }
 
     // Compute the hash of the input's key part.
@@ -74,30 +79,6 @@ where
     let mut borrow = cache.0.write();
     borrow.insert::<In>(key, constraint.take(), output.clone());
 
-    #[cfg(feature = "testing")]
-    LAST_WAS_HIT.with(|cell| cell.set(false));
-
-    output
-}
-
-fn memoized_disabled<'a, In, Out, F>(
-    input: In,
-    constraint: &'a In::Constraint,
-    func: F,
-) -> Out
-where
-    In: Input<'a>,
-    Out: Clone + 'static,
-    F: FnOnce(In) -> Out,
-{
-    // Execute the function with the new constraints hooked in.
-    let (input, outer) = input.retrack(constraint);
-    let output = func(input);
-
-    // Add the new constraints to the outer ones.
-    outer.join(constraint);
-
-    // Ensure that the last call was a miss during testing.
     #[cfg(feature = "testing")]
     LAST_WAS_HIT.with(|cell| cell.set(false));
 
