@@ -34,7 +34,9 @@ impl<C> Default for Recording<C> {
     }
 }
 
-impl<C: Call> Sink<C> for &Mutex<Recording<C>> {
+impl<C: Call> Sink for &Mutex<Recording<C>> {
+    type Call = C;
+
     fn emit(&self, call: C, ret: u128) -> bool {
         if call.is_mutable() {
             self.lock().mutable.push(call);

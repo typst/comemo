@@ -33,7 +33,7 @@ pub trait Input<'a> {
 
     /// Hook up the given constraint to the tracked parts of the input and
     /// return the result alongside the outer constraints.
-    fn retrack(&mut self, sink: impl Sink<Self::Call> + Copy + 'a, b: &'a Bump);
+    fn retrack(&mut self, sink: impl Sink<Call = Self::Call> + Copy + 'a, b: &'a Bump);
 }
 
 impl<'a, T: Hash> Input<'a> for T {
@@ -56,7 +56,7 @@ impl<'a, T: Hash> Input<'a> for T {
     }
 
     #[inline]
-    fn retrack(&mut self, _: impl Sink<Self::Call> + Copy + 'a, _: &'a Bump) {}
+    fn retrack(&mut self, _: impl Sink<Call = Self::Call> + Copy + 'a, _: &'a Bump) {}
 }
 
 impl<'a, T> Input<'a> for Tracked<'a, T>
@@ -91,7 +91,7 @@ where
     }
 
     #[inline]
-    fn retrack(&mut self, sink: impl Sink<Self::Call> + Copy + 'a, b: &'a Bump) {
+    fn retrack(&mut self, sink: impl Sink<Call = Self::Call> + Copy + 'a, b: &'a Bump) {
         self.sink = Some(b.alloc(TrackedSink { prev: self.sink, sink }));
     }
 }
@@ -125,21 +125,24 @@ where
     }
 
     #[inline]
-    fn retrack(&mut self, sink: impl Sink<Self::Call> + Copy + 'a, b: &'a Bump) {
+    fn retrack(&mut self, sink: impl Sink<Call = Self::Call> + Copy + 'a, b: &'a Bump) {
         self.sink = Some(b.alloc(TrackedSink { prev: self.sink, sink }));
     }
 }
 
+#[derive(Copy, Clone)]
 struct TrackedSink<'a, C, S> {
-    prev: Option<&'a dyn Sink<C>>,
+    prev: Option<&'a dyn Sink<Call = C>>,
     sink: S,
 }
 
-impl<'a, C, S> Sink<C> for TrackedSink<'a, C, S>
+impl<'a, C, S> Sink for TrackedSink<'a, C, S>
 where
     C: Call,
-    S: Sink<C>,
+    S: Sink<Call = C>,
 {
+    type Call = C;
+
     fn emit(&self, call: C, ret: u128) -> bool {
         if self.sink.emit(call.clone(), ret)
             && let Some(prev) = self.prev
@@ -183,13 +186,14 @@ macro_rules! multi {
                 #[inline]
                 fn retrack(
                     &mut self,
-                    sink: impl Sink<Self::Call> + Copy + 'a,
+                    sink: impl Sink<Call = Self::Call> + Copy + 'a,
                     bump: &'a Bump,
                 ) {
-                    // $((self.0).$idx.retrack(
-                    //     // move |call, hash| sink.emit(MultiCall::$param(call), hash),
-                    //     bump,
-                    // );)*
+                    $((self.0).$idx.retrack(
+                        Redirect::<_, $idx>(sink),
+                        // move |call, hash| sink.emit(MultiCall::$param(call), hash),
+                        bump,
+                    );)*
                 }
             }
 
@@ -218,33 +222,90 @@ macro_rules! multi {
     };
 }
 
-multi! {}
-multi! { A Z 0 }
-multi! { A Z 0, B Y 1 }
-multi! { A Z 0, B Y 1, C X 2 }
-multi! { A Z 0, B Y 1, C X 2, D W 3 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
-multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
+// multi! {}
+// multi! { A Z 0 }
+// multi! { A Z 0, B Y 1 }
+// multi! { A Z 0, B Y 1, C X 2 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10 }
+// multi! { A Z 0, B Y 1, C X 2, D W 3, E V 4, F U 5, G T 6, H S 7, I R 8, J Q 9, K P 10, L O 11 }
 
-// pub enum MultiCall<A, B> {
-//     A(A),
-//     B(B),
-// }
+#[allow(unused_variables, clippy::unused_unit, non_snake_case)]
+const _: () = {
+    impl<'a, A: Input<'a>, B: Input<'a>> Input<'a> for Multi<(A, B)> {
+        type Call = MultiCall<A::Call, B::Call>;
+        #[inline]
+        fn key<T: Hasher>(&self, state: &mut T) {
+            (self.0).0.key(state);
+            (self.0).1.key(state);
+        }
+        #[inline]
+        fn call(&self, call: Self::Call) -> u128 {
+            match call {
+                MultiCall::A(A) => (self.0).0.call(A),
+                MultiCall::B(B) => (self.0).1.call(B),
+            }
+        }
+        #[inline]
+        fn call_mut(&mut self, call: Self::Call) -> u128 {
+            match call {
+                MultiCall::A(A) => (self.0).0.call_mut(A),
+                MultiCall::B(B) => (self.0).1.call_mut(B),
+            }
+        }
+        #[inline]
+        fn retrack(
+            &mut self,
+            sink: impl Sink<Call = Self::Call> + Copy + 'a,
+            bump: &'a Bump,
+        ) {
+            (self.0).0.retrack(Redirect::<0, _>(sink), bump);
+            (self.0).1.retrack(Redirect::<1, _>(sink), bump);
+        }
+    }
+    #[derive(PartialEq, Clone, Hash)]
+    pub enum MultiCall<A, B> {
+        A(A),
+        B(B),
+    }
+    impl<A: Call, B: Call> Call for MultiCall<A, B> {
+        #[inline]
+        fn is_mutable(&self) -> bool {
+            match *self {
+                Self::A(ref A) => A.is_mutable(),
+                Self::B(ref B) => B.is_mutable(),
+            }
+        }
+    }
 
-// struct Foo<S>(S);
+    #[derive(Copy, Clone)]
+    struct Redirect<const I: usize, S>(S);
 
-// impl<A, B, C, S> Sink<C> for Foo<S>
-// where
-//     C: Call,
-//     S: Sink<MultiCall<A, B>>,
-// {
-//     fn emit(&self, call: B, ret: u128) -> bool {
-//         self.0.emit(MultiCall::B(call), ret)
-//     }
-// }
+    impl<S, A, B> Sink for Redirect<0, S>
+    where
+        S: Sink<Call = MultiCall<A, B>>,
+    {
+        type Call = A;
+
+        fn emit(&self, call: A, ret: u128) -> bool {
+            self.0.emit(MultiCall::A(call), ret)
+        }
+    }
+
+    impl<S, A, B> Sink for Redirect<1, S>
+    where
+        S: Sink<Call = MultiCall<A, B>>,
+    {
+        type Call = B;
+
+        fn emit(&self, call: B, ret: u128) -> bool {
+            self.0.emit(MultiCall::B(call), ret)
+        }
+    }
+};
