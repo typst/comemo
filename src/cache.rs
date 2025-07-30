@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use fxhash::FxHashMap;
 use parking_lot::RwLock;
 use siphasher::sip128::{Hasher128, SipHasher13};
 
@@ -132,7 +132,7 @@ impl<C: 'static, Out: 'static> Cache<C, Out> {
 /// The internal data for a cache.
 pub struct CacheData<C, Out> {
     /// Maps from hashes to memoized results.
-    entries: HashMap<u128, Vec<CacheEntry<C, Out>>>,
+    entries: FxHashMap<u128, Vec<CacheEntry<C, Out>>>,
 }
 
 impl<C, Out: 'static> CacheData<C, Out> {
@@ -174,7 +174,7 @@ impl<C, Out: 'static> CacheData<C, Out> {
 
 impl<C, Out> Default for CacheData<C, Out> {
     fn default() -> Self {
-        Self { entries: HashMap::new() }
+        Self { entries: FxHashMap::default() }
     }
 }
 
