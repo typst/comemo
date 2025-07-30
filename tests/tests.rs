@@ -407,6 +407,34 @@ impl Emitter {
     }
 }
 
+/// Ensures that mutabled tracked calls in a nested function are properly
+/// replayed when there is a cache hit for a top-level function.
+#[test]
+#[serial]
+fn test_mutable_nested() {
+    #[comemo::memoize]
+    fn a(counter: TrackedMut<Counter>, _k: usize) {
+        b(counter);
+    }
+
+    #[comemo::memoize]
+    fn b(mut counter: TrackedMut<Counter>) {
+        counter.add(3);
+    }
+
+    let mut c1 = Counter(0);
+    a(c1.track_mut(), 0);
+    assert_eq!(c1.0, 3);
+
+    let mut c2 = Counter(0);
+    a(c2.track_mut(), 1);
+    assert_eq!(c2.0, 3);
+
+    let mut c3 = Counter(0);
+    a(c3.track_mut(), 1);
+    assert_eq!(c3.0, 3);
+}
+
 /// Ensures that we don't run into quadratic runtime during cache validation of
 /// many cache entries with the same key hash.
 #[test]
