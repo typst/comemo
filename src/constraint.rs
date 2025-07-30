@@ -1,8 +1,8 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
 
+use fxhash::FxHashMap;
 use parking_lot::RwLock;
 
 use crate::accelerate;
@@ -156,7 +156,7 @@ impl<T: Call> Default for MutableConstraint<T> {
 
 /// A map of calls.
 #[derive(Clone)]
-struct EntryMap<T: Call>(HashMap<u128, ConstraintEntry<T>>);
+struct EntryMap<T: Call>(FxHashMap<u128, ConstraintEntry<T>>);
 
 impl<T: Call> EntryMap<T> {
     /// Enter a constraint for a call to a function.
@@ -176,7 +176,7 @@ impl<T: Call> EntryMap<T> {
 
 impl<T: Call> Default for EntryMap<T> {
     fn default() -> Self {
-        Self(HashMap::new())
+        Self(FxHashMap::default())
     }
 }
 

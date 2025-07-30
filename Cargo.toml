@@ -14,6 +14,7 @@ keywords = ["incremental", "memoization", "tracked", "constraints"]
 
 [workspace.dependencies]
 comemo-macros = { version = "0.4.0", path = "macros" }
+fxhash = "0.2"
 once_cell = "1.18"
 parking_lot = "0.12"
 proc-macro2 = "1"
@@ -41,6 +42,7 @@ testing = []
 
 [dependencies]
 comemo-macros = { workspace = true, optional = true }
+fxhash = { workspace = true }
 parking_lot = { workspace = true }
 siphasher = { workspace = true }
 
