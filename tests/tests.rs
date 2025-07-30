@@ -10,11 +10,11 @@ use serial_test::serial;
 macro_rules! test {
     (miss: $call:expr, $result:expr) => {{
         assert_eq!($call, $result);
-        assert!(!comemo::internal::last_was_hit());
+        assert!(!comemo::testing::last_was_hit());
     }};
     (hit: $call:expr, $result:expr) => {{
         assert_eq!($call, $result);
-        assert!(comemo::internal::last_was_hit());
+        assert!(comemo::testing::last_was_hit());
     }};
 }
 

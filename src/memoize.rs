@@ -12,12 +12,6 @@ use crate::input::Input;
 /// The global list of eviction functions.
 static EVICTORS: RwLock<Vec<fn(usize)>> = RwLock::new(Vec::new());
 
-#[cfg(feature = "testing")]
-thread_local! {
-    /// Whether the last call was a hit.
-    static LAST_WAS_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// Execute a function or use a cached result for it.
 pub fn memoize<'a, In, Out, F>(
     cache: &Cache<In::Constraint, Out>,
@@ -37,7 +31,7 @@ where
 
         // Ensure that the last call was a miss during testing.
         #[cfg(feature = "testing")]
-        LAST_WAS_HIT.with(|cell| cell.set(false));
+        crate::testing::register_miss();
 
         return output;
     }
@@ -59,7 +53,7 @@ where
         input.retrack(constraint).1.join(constrained);
 
         #[cfg(feature = "testing")]
-        LAST_WAS_HIT.with(|cell| cell.set(true));
+        crate::testing::register_hit();
 
         return value.clone();
     }
@@ -80,7 +74,7 @@ where
     borrow.insert::<In>(key, constraint.take(), output.clone());
 
     #[cfg(feature = "testing")]
-    LAST_WAS_HIT.with(|cell| cell.set(false));
+    crate::testing::register_miss();
 
     output
 }
@@ -102,12 +96,6 @@ pub fn evict(max_age: usize) {
 /// Register an eviction function in the global list.
 pub fn register_evictor(evict: fn(usize)) {
     EVICTORS.write().push(evict);
-}
-
-/// Whether the last call was a hit.
-#[cfg(feature = "testing")]
-pub fn last_was_hit() -> bool {
-    LAST_WAS_HIT.with(|cell| cell.get())
 }
 
 /// A cache for a single memoized function.

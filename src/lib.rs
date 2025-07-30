@@ -95,6 +95,9 @@ mod input;
 mod memoize;
 mod track;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
 pub use crate::hash::Prehashed;
 pub use crate::memoize::evict;
 pub use crate::track::{Track, Tracked, TrackedMut, Validate};
@@ -112,7 +115,4 @@ pub mod internal {
     pub use crate::input::{Input, Multi, assert_hashable_or_trackable};
     pub use crate::memoize::{Cache, CacheData, memoize, register_evictor};
     pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
-
-    #[cfg(feature = "testing")]
-    pub use crate::memoize::last_was_hit;
 }
