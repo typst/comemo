@@ -19,10 +19,10 @@ thread_local! {
 }
 
 /// Execute a function or use a cached result for it.
-pub fn memoized<'a, In, Out, F>(
+pub fn memoize<'a, In, Out, F>(
+    cache: &Cache<In::Constraint, Out>,
     mut input: In,
     constraint: &'a In::Constraint,
-    cache: &Cache<In::Constraint, Out>,
     enabled: bool,
     func: F,
 ) -> Out

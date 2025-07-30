@@ -157,10 +157,10 @@ fn process(function: &Function) -> Result<TokenStream> {
 
         #(#bounds;)*
 
-        ::comemo::internal::memoized(
+        ::comemo::internal::memoize(
+            &__CACHE,
             ::comemo::internal::Multi(#arg_tuple),
             &::core::default::Default::default(),
-            &__CACHE,
             #enabled,
             #closure,
         )
