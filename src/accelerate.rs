@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
 
 /// The global list of currently alive accelerators.

@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
 
-use fxhash::FxHashMap;
 use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 
 use crate::accelerate;
 

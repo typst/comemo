@@ -1,8 +1,8 @@
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fxhash::FxHashMap;
 use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 use siphasher::sip128::{Hasher128, SipHasher13};
 
 use crate::accelerate;
