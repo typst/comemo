@@ -3,8 +3,10 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
 
-use comemo::{Track, Tracked, TrackedMut, Validate, evict, memoize, track};
+use comemo::{Track, Tracked, TrackedMut, evict, memoize, track};
+use quickcheck::Arbitrary;
 use serial_test::serial;
 
 macro_rules! test {
@@ -80,6 +82,7 @@ fn evaluate(script: &str, files: Tracked<Files>) -> i32 {
         })
         .sum()
 }
+
 /// Test the calc language.
 #[test]
 #[serial]
@@ -265,6 +268,10 @@ impl Tester {
     }
 }
 
+/// A non-copy struct that is passed by value to a tracked method.
+#[derive(Clone, PartialEq, Hash)]
+struct Heavy(String);
+
 /// Test empty type without methods.
 struct Empty;
 
@@ -340,7 +347,7 @@ fn test_variance() {
 struct Chain<'a> {
     // Need to override the lifetime here so that a `Tracked` is covariant over
     // `Chain`.
-    outer: Option<Tracked<'a, Self, <Chain<'static> as Validate>::Constraint>>,
+    outer: Option<Tracked<'a, Self, <Chain<'static> as Track>::Call>>,
     value: u32,
 }
 
@@ -363,33 +370,29 @@ impl<'a> Chain<'a> {
     }
 }
 
-/// Test mutable tracking.
+/// Test purely mutable tracking.
 #[test]
 #[serial]
 #[rustfmt::skip]
-fn test_mutable() {
+fn test_purely_mutable() {
     #[comemo::memoize]
-    fn dump(mut sink: TrackedMut<Emitter>) {
-        sink.emit("a");
-        sink.emit("b");
-        let c = sink.len_or_ten().to_string();
-        sink.emit(&c);
+    fn dump(mut emitter: TrackedMut<Emitter>, value: &str) {
+        emitter.emit(value);
+        emitter.emit("1");
     }
 
     let mut emitter = Emitter(vec![]);
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(miss: dump(emitter.track_mut()), ());
-    test!(hit: dump(emitter.track_mut()), ());
-    test!(hit: dump(emitter.track_mut()), ());
+    test!(miss: dump(emitter.track_mut(), "a"), ());
+    test!(miss: dump(emitter.track_mut(), "b"), ());
+    test!(miss: dump(emitter.track_mut(), "c"), ());
+    test!(hit: dump(emitter.track_mut(), "a"), ());
+    test!(hit: dump(emitter.track_mut(), "b"), ());
     assert_eq!(emitter.0, [
-        "a", "b", "2",
-        "a", "b", "5",
-        "a", "b", "8",
-        "a", "b", "10",
-        "a", "b", "10",
-        "a", "b", "10",
+        "a", "1",
+        "b", "1",
+        "c", "1",
+        "a", "1",
+        "b", "1",
     ])
 }
 
@@ -402,22 +405,138 @@ impl Emitter {
     fn emit(&mut self, msg: &str) {
         self.0.push(msg.into());
     }
+}
 
-    fn len_or_ten(&self) -> usize {
-        self.0.len().min(10)
+/// Ensures that we don't run into quadratic runtime during cache validation of
+/// many cache entries with the same key hash.
+#[test]
+#[serial]
+fn test_many_with_same_key() {
+    #[memoize]
+    fn contextual(context: Tracked<Context>) -> String {
+        if let Some(loc) = context.location() {
+            if loc == 5 {
+                format!("Twenty has {}", context.styles())
+            } else {
+                format!("Location: {loc}")
+            }
+        } else {
+            "No location".into()
+        }
+    }
+
+    fn oracle(context: &Context) -> String {
+        if let Some(loc) = context.location {
+            if loc == 5 {
+                format!("Twenty has {}", context.styles)
+            } else {
+                format!("Location: {loc}")
+            }
+        } else {
+            "No location".into()
+        }
+    }
+
+    for i in 0..1000 {
+        let context = Context { location: Some(i), styles: "styles" };
+        test!(miss: contextual(context.track()), oracle(&context));
+    }
+
+    for i in 0..1000 {
+        let context = Context { location: Some(i), styles: "styles" };
+        test!(hit: contextual(context.track()), oracle(&context));
     }
 }
 
-/// A non-copy struct that is passed by value to a tracked method.
-#[derive(Clone, PartialEq, Hash)]
-struct Heavy(String);
+/// Tests a memoized function that calls tracked functions in non-deterministic
+/// fashion. (Not just out of order, but some call that appeared in one run does
+/// not appear at all in the other even though the same calls and return hashes
+/// led up to that point.q)
+#[test]
+#[serial]
+#[should_panic(expected = "comemo: memoized function is non-deterministic")]
+fn test_non_deterministic() {
+    use std::sync::atomic::Ordering::SeqCst;
+
+    static FOO: AtomicUsize = AtomicUsize::new(0);
+
+    #[memoize]
+    fn contextual(context: Tracked<Context>) -> String {
+        if FOO.load(SeqCst) == 0 {
+            let _ = context.location();
+        } else {
+            let _ = context.styles();
+        }
+        String::new()
+    }
+
+    let context = Context { location: Some(0), styles: "styles" };
+    FOO.store(0, SeqCst);
+    contextual(context.track());
+
+    let context = Context { location: Some(1), styles: "styles" };
+    FOO.store(1, SeqCst);
+    contextual(context.track());
+}
+
+/// Tests a memoized function that calls tracked functions out of order, but in
+/// a fashion that is still deterministic in which functions are called overall
+/// (this happens in deterministic functions that use multi-threading
+/// internally).
+#[test]
+#[serial]
+fn test_deterministic_out_of_order() {
+    use std::sync::atomic::Ordering::SeqCst;
+
+    static FOO: AtomicUsize = AtomicUsize::new(0);
+
+    #[memoize]
+    fn contextual(context: Tracked<Context>) -> String {
+        let (a, b) = if FOO.load(SeqCst) == 0 {
+            let a = context.location();
+            let b = context.styles();
+            (a, b)
+        } else {
+            let b = context.styles();
+            let a = context.location();
+            (a, b)
+        };
+        format!("{a:?} {b}")
+    }
+
+    let context = Context { location: Some(0), styles: "styles" };
+    FOO.store(0, SeqCst);
+    test!(miss: contextual(context.track()), "Some(0) styles");
+
+    FOO.store(1, SeqCst);
+    test!(hit: contextual(context.track()), "Some(0) styles");
+
+    let context = Context { location: Some(1), styles: "styles" };
+    test!(miss: contextual(context.track()), "Some(1) styles");
+}
+
+struct Context {
+    location: Option<u64>,
+    styles: &'static str,
+}
+
+#[track]
+impl Context {
+    fn location(&self) -> Option<u64> {
+        self.location
+    }
+
+    fn styles(&self) -> &'static str {
+        self.styles
+    }
+}
 
 /// Test a tracked method that is impure.
 #[test]
 #[serial]
 #[cfg(debug_assertions)]
 #[should_panic(
-    expected = "comemo: found conflicting constraints. is this tracked function pure?"
+    expected = "comemo: found differing return values. is there an impure tracked function?"
 )]
 fn test_impure_tracked_method() {
     #[comemo::memoize]
@@ -454,4 +573,133 @@ fn test_with_disabled() {
 
     test!(miss: disabled(2000), 2000);
     test!(hit: disabled(2000), 2000);
+}
+
+#[quickcheck_macros::quickcheck]
+fn test_memoize_quickcheck(cases: Cases) {
+    for Case(map, tree) in cases.0 {
+        let mut c1 = Counter(0);
+        let r1 = fuzzable_unmemoized(&map, &mut c1, &tree);
+
+        let mut c2 = Counter(0);
+        let r2 = fuzzable(map.track(), c2.track_mut(), &tree);
+
+        let mut c3 = Counter(0);
+        let r3 = fuzzable(map.track(), c3.track_mut(), &tree);
+        assert!(comemo::testing::last_was_hit());
+
+        assert_eq!(r1, r2);
+        assert_eq!(r2, r3);
+        assert_eq!(c1, c2);
+        assert_eq!(c2, c3);
+    }
+    comemo::evict(2)
+}
+
+#[memoize]
+fn fuzzable(
+    map: Tracked<IntMap>,
+    mut counter: TrackedMut<Counter>,
+    tree: &[Node],
+) -> u32 {
+    tree.iter()
+        .filter_map(|node| match node {
+            Node::Leaf(leaf) => {
+                if *leaf == 7 {
+                    counter.add(1);
+                }
+                map.get(*leaf)
+            }
+            Node::Inner(inner, _) => {
+                Some(fuzzable(map, TrackedMut::reborrow_mut(&mut counter), inner))
+            }
+        })
+        .fold(0, |a, b| a.saturating_add(b))
+}
+
+fn fuzzable_unmemoized(map: &IntMap, counter: &mut Counter, tree: &[Node]) -> u32 {
+    tree.iter()
+        .filter_map(|node| match node {
+            Node::Leaf(leaf) => {
+                if *leaf == 7 {
+                    counter.add(1);
+                }
+                map.get(*leaf)
+            }
+            Node::Inner(inner, _) => Some(fuzzable_unmemoized(map, counter, inner)),
+        })
+        .fold(0, |a, b| a.saturating_add(b))
+}
+
+#[derive(Debug, Clone)]
+struct Cases(Vec<Case>);
+
+impl Arbitrary for Cases {
+    fn arbitrary(_: &mut quickcheck::Gen) -> Self {
+        Self(Arbitrary::arbitrary(&mut quickcheck::Gen::new(5)))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Case(IntMap, Vec<Node>);
+
+impl Arbitrary for Case {
+    fn arbitrary(_: &mut quickcheck::Gen) -> Self {
+        let g = &mut quickcheck::Gen::new(100);
+        Self(Arbitrary::arbitrary(g), Arbitrary::arbitrary(g))
+    }
+}
+
+#[derive(Debug, Clone, Hash)]
+enum Node {
+    Leaf(u32),
+    Inner(Vec<Node>, usize),
+}
+
+impl Node {
+    fn depth(&self) -> usize {
+        match self {
+            Self::Leaf(_) => 0,
+            Self::Inner(_, depth) => *depth,
+        }
+    }
+}
+
+impl Arbitrary for Node {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        if g.size() == 0 || bool::arbitrary(g) {
+            Self::Leaf(Arbitrary::arbitrary(g))
+        } else {
+            let g = &mut quickcheck::Gen::new(g.size() / 3);
+            let nodes: Vec<Node> = Arbitrary::arbitrary(g);
+            let depth = nodes.iter().map(|node| node.depth() + 1).max().unwrap_or(0);
+            Self::Inner(nodes, depth)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct IntMap(HashMap<u32, u32>);
+
+impl Arbitrary for IntMap {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        Self(Arbitrary::arbitrary(g))
+    }
+}
+
+#[track]
+impl IntMap {
+    fn get(&self, k: u32) -> Option<u32> {
+        self.0.get(&k).copied()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct Counter(usize);
+
+#[track]
+impl Counter {
+    fn add(&mut self, v: usize) {
+        self.0 += v;
+    }
 }
