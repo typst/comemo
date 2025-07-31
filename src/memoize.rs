@@ -135,6 +135,16 @@ pub struct CacheData<C, Out> {
     tree: CallTree<C, CacheEntry<C, Out>>,
 }
 
+/// A memoized result.
+struct CacheEntry<C, Out> {
+    /// The memoized function's output.
+    output: Out,
+    /// Mutable tracked calls that must be replayed.
+    mutable: Vec<C>,
+    /// How many evictions have passed since the entry has last been used.
+    age: AtomicUsize,
+}
+
 impl<C, Out: 'static> CacheData<C, Out> {
     /// Evict all entries whose age is larger than or equal to `max_age`.
     fn evict(&mut self, max_age: usize) {
@@ -173,16 +183,6 @@ impl<C, Out: 'static> CacheData<C, Out> {
             CacheEntry { output, mutable, age: AtomicUsize::new(0) },
         )
     }
-}
-
-/// A memoized result.
-struct CacheEntry<C, Out> {
-    /// The memoized function's output.
-    output: Out,
-    /// Mutable tracked calls that must be replayed.
-    mutable: Vec<C>,
-    /// How many evictions have passed since the entry has last been used.
-    age: AtomicUsize,
 }
 
 impl<C, Out> Default for CacheData<C, Out> {
