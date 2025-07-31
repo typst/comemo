@@ -1,80 +1,91 @@
 use std::fmt::{self, Debug, Formatter};
+use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 
 use crate::accelerate;
-use crate::constraint::Join;
 
 /// A trackable type.
 ///
 /// This is implemented by types that have an implementation block annotated
 /// with `#[track]` and for trait objects whose traits are annotated with
 /// `#[track]`. For more details, see [its documentation](macro@crate::track).
-pub trait Track: Validate + Surfaces {
+pub trait Track: Surfaces {
+    /// An enumeration of possible tracked calls that can be performed on this
+    /// tracked type.
+    type Call: Call;
+
+    /// Performs a call on the value and returns the hash of its results.
+    fn call(&self, call: &Self::Call) -> u128;
+
+    /// Performs a mutable call on the value.
+    fn call_mut(&mut self, call: &Self::Call);
+
     /// Start tracking all accesses to a value.
     #[inline]
     fn track(&self) -> Tracked<'_, Self> {
-        Tracked {
-            value: self,
-            constraint: None,
-            id: accelerate::id(),
-        }
+        Tracked { value: self, sink: None, id: accelerate::id() }
     }
 
     /// Start tracking all accesses and mutations to a value.
     #[inline]
     fn track_mut(&mut self) -> TrackedMut<'_, Self> {
-        TrackedMut { value: self, constraint: None }
+        TrackedMut { value: self, sink: None }
     }
 
-    /// Start tracking all accesses into a constraint.
+    /// Start tracking all accesses into a sink.
     #[inline]
-    fn track_with<'a>(&'a self, constraint: &'a Self::Constraint) -> Tracked<'a, Self> {
+    fn track_with<'a>(
+        &'a self,
+        sink: &'a dyn Sink<Call = Self::Call>,
+    ) -> Tracked<'a, Self> {
         Tracked {
             value: self,
-            constraint: Some(constraint),
+            sink: Some(sink),
             id: accelerate::id(),
         }
     }
 
-    /// Start tracking all accesses and mutations into a constraint.
+    /// Start tracking all accesses and mutations into a sink.
     #[inline]
     fn track_mut_with<'a>(
         &'a mut self,
-        constraint: &'a Self::Constraint,
+        sink: &'a dyn Sink<Call = Self::Call>,
     ) -> TrackedMut<'a, Self> {
-        TrackedMut { value: self, constraint: Some(constraint) }
+        TrackedMut { value: self, sink: Some(sink) }
     }
 }
 
-/// A type that can be validated against constraints.
-///
-/// Typical crate usage does not require you to interact with its trait.
-/// However, it can be useful if you want to integrate comemo's tracking and
-/// constraint validation mechanism directly into your code.
-///
-/// This trait is implemented by the `#[track]` macro alongside [`Track`].
-pub trait Validate {
-    /// The constraints for this type.
-    type Constraint: Default + Clone + Join + 'static;
+/// A destination to which recorded tracked calls can be sent.
+pub trait Sink: Send + Sync {
+    /// An enumeration of possible tracked calls that can be sent to this sink.
+    type Call;
 
-    /// Whether this value fulfills the given constraints.
+    /// Emit a call and its return hash to the sink.
     ///
-    /// For a type `Foo`, empty constraints can be created with `<Foo as
-    /// Validate>::Constraint::default()` and filled with
-    /// [`track_with`](Track::track_with) or
-    /// [`track_mut_with`](Track::track_mut_with).
-    fn validate(&self, constraint: &Self::Constraint) -> bool;
+    /// Returns `false` if the call was deduplicated, so that callers can avoid
+    /// sending it to other sinks higher up the hierarchy.
+    fn emit(&self, call: Self::Call, ret: u128) -> bool;
+}
 
-    /// Accelerated version of [`validate`](Self::validate).
-    ///
-    /// A `id` uniquely identifies a value to speed up repeated validation of
-    /// equal constraints against the same value. If given the same `id` twice,
-    /// `self` must also be identical, unless [`evict`](crate::evict) has been
-    /// called in between.
-    fn validate_with_id(&self, constraint: &Self::Constraint, id: usize) -> bool;
+impl<S: Sink> Sink for &S {
+    type Call = S::Call;
 
-    /// Replay recorded mutations to the value.
-    fn replay(&mut self, constraint: &Self::Constraint);
+    fn emit(&self, call: Self::Call, ret: u128) -> bool {
+        (*self).emit(call, ret)
+    }
+}
+
+/// A call to a tracked function.
+pub trait Call: Clone + PartialEq + Hash + Send + Sync {
+    /// Whether the call is mutable.
+    fn is_mutable(&self) -> bool;
+}
+
+/// This implementation is used for hashed types in the `Input` trait.
+impl Call for () {
+    fn is_mutable(&self) -> bool {
+        false
+    }
 }
 
 /// This type's tracked surfaces.
@@ -122,29 +133,33 @@ pub trait Surfaces {
 /// how it can be used. In particular, invariance prevents you from creating a
 /// usable _chain_ of tracked types.
 ///
-/// ```ignore
+/// ```
+/// # use comemo::{Track, Tracked};
 /// struct Chain<'a> {
 ///     outer: Tracked<'a, Self>,
 ///     data: u32, // some data for the chain link
 /// }
+/// # #[comemo::track] impl<'a> Chain<'a> {}
 /// ```
 ///
 /// However, this is sometimes a useful pattern (for example, it allows you to
 /// detect cycles in memoized recursive algorithms). If you want to create a
 /// tracked chain or need covariance for another reason, you need to manually
-/// specify the constraint type like so:
+/// specify the call type like so:
 ///
-/// ```ignore
+/// ```
+/// # use comemo::{Track, Tracked};
 /// struct Chain<'a> {
-///     outer: Tracked<'a, Self, <Chain<'static> as Validate>::Constraint>,
+///     outer: Tracked<'a, Self, <Chain<'static> as Track>::Call>,
 ///     data: u32, // some data for the chain link
 /// }
+/// # #[comemo::track] impl<'a> Chain<'a> {}
 /// ```
 ///
 /// Notice the `'static` lifetime: This makes the compiler understand that no
 /// strange business that depends on `'a` is happening in the associated
 /// constraint type. (In fact, all constraints are `'static`.)
-pub struct Tracked<'a, T, C = <T as Validate>::Constraint>
+pub struct Tracked<'a, T, C = <T as Track>::Call>
 where
     T: Track + ?Sized,
 {
@@ -155,7 +170,7 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) constraint: Option<&'a C>,
+    pub(crate) sink: Option<&'a dyn Sink<Call = C>>,
     /// A unique ID for validation acceleration.
     pub(crate) id: usize,
 }
@@ -205,7 +220,7 @@ where
 /// details, see [its documentation](macro@crate::track).
 ///
 /// For more details, see [`Tracked`].
-pub struct TrackedMut<'a, T, C = <T as Validate>::Constraint>
+pub struct TrackedMut<'a, T, C = <T as Track>::Call>
 where
     T: Track + ?Sized,
 {
@@ -216,7 +231,7 @@ where
     ///
     /// Starts out as `None` and is set to a stack-stored constraint in the
     /// preamble of memoized functions.
-    pub(crate) constraint: Option<&'a C>,
+    pub(crate) sink: Option<&'a dyn Sink<Call = C>>,
 }
 
 impl<'a, T> TrackedMut<'a, T>
@@ -231,7 +246,7 @@ where
     pub fn downgrade(this: Self) -> Tracked<'a, T> {
         Tracked {
             value: this.value,
-            constraint: this.constraint,
+            sink: this.sink,
             id: accelerate::id(),
         }
     }
@@ -244,7 +259,7 @@ where
     pub fn reborrow(this: &Self) -> Tracked<'_, T> {
         Tracked {
             value: this.value,
-            constraint: this.constraint,
+            sink: this.sink,
             id: accelerate::id(),
         }
     }
@@ -255,7 +270,7 @@ where
     /// defined on `T`. It should be called as `TrackedMut::reborrow_mut(...)`.
     #[inline]
     pub fn reborrow_mut(this: &mut Self) -> TrackedMut<'_, T> {
-        TrackedMut { value: this.value, constraint: this.constraint }
+        TrackedMut { value: this.value, sink: this.sink }
     }
 }
 
@@ -293,31 +308,31 @@ where
 
 /// Destructure a `Tracked<_>` into its parts.
 #[inline]
-pub fn to_parts_ref<T>(tracked: Tracked<'_, T>) -> (&T, Option<&T::Constraint>)
+pub fn to_parts_ref<T>(tracked: Tracked<'_, T>) -> (&T, Option<&dyn Sink<Call = T::Call>>)
 where
     T: Track + ?Sized,
 {
-    (tracked.value, tracked.constraint)
+    (tracked.value, tracked.sink)
 }
 
 /// Destructure a `TrackedMut<_>` into its parts.
 #[inline]
 pub fn to_parts_mut_ref<'a, T>(
     tracked: &'a TrackedMut<T>,
-) -> (&'a T, Option<&'a T::Constraint>)
+) -> (&'a T, Option<&'a dyn Sink<Call = T::Call>>)
 where
     T: Track + ?Sized,
 {
-    (tracked.value, tracked.constraint)
+    (tracked.value, tracked.sink)
 }
 
 /// Destructure a `TrackedMut<_>` into its parts.
 #[inline]
 pub fn to_parts_mut_mut<'a, T>(
     tracked: &'a mut TrackedMut<T>,
-) -> (&'a mut T, Option<&'a T::Constraint>)
+) -> (&'a mut T, Option<&'a dyn Sink<Call = T::Call>>)
 where
     T: Track + ?Sized,
 {
-    (tracked.value, tracked.constraint)
+    (tracked.value, tracked.sink)
 }

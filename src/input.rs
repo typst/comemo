@@ -1,7 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use crate::constraint::Join;
-use crate::track::{Track, Tracked, TrackedMut, Validate};
+use crate::track::{Call, Sink, Track, Tracked, TrackedMut};
 
 /// Ensure a type is suitable as input.
 #[inline]
@@ -12,32 +11,39 @@ pub fn assert_hashable_or_trackable<'a, In: Input<'a>>(_: &In) {}
 /// This is implemented for hashable types, `Tracked<_>` types and `Args<(...)>`
 /// types containing tuples up to length twelve.
 pub trait Input<'a> {
-    /// The constraints for this input.
-    type Constraint: Default + Clone + Join + 'static;
+    /// An enumeration of possible tracked calls that can be performed on any
+    /// tracked part of this input.
+    type Call: Call;
 
-    /// The extracted outer constraints.
-    type Outer: Join<Self::Constraint>;
+    /// Storage for a sink that combines the input's existing sink(s)
+    /// (if any) with `S`.
+    type Storage<S: Sink<Call = Self::Call> + 'a>: Default;
 
-    /// Hash the key parts of the input.
+    /// Hashes the key (i.e. not tracked) parts of the input.
     fn key<H: Hasher>(&self, state: &mut H);
 
-    /// Validate the tracked parts of the input.
-    fn validate(&self, constraint: &Self::Constraint) -> bool;
+    /// Performs a call on a tracked part of the input and returns the hash of
+    /// the result.
+    ///
+    /// If the call is mutable, the side effect will not be observable.
+    fn call(&self, call: &Self::Call) -> u128;
 
-    /// Replay mutations to the input.
-    fn replay(&mut self, constraint: &Self::Constraint);
+    /// Performs a mutable call on a tracked part of the input.
+    /// Mutable calls cannot have a return value and are only executed for their
+    /// side effect. As such, this function does not return a result hash.
+    fn call_mut(&mut self, call: &Self::Call);
 
-    /// Hook up the given constraint to the tracked parts of the input and
-    /// return the result alongside the outer constraints.
-    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer)
+    /// Integrates the given sink into the tracked parts of the input, using
+    /// the external storage to store the new combined sink with lifetime 'a.
+    fn attach<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
     where
-        Self: Sized;
+        S: Sink<Call = Self::Call> + Copy + 'a;
 }
 
 impl<'a, T: Hash> Input<'a> for T {
-    // No constraint for hashed inputs.
-    type Constraint = ();
-    type Outer = ();
+    // No sink for hashed inputs.
+    type Call = ();
+    type Storage<S: Sink<Call = Self::Call> + 'a> = ();
 
     #[inline]
     fn key<H: Hasher>(&self, state: &mut H) {
@@ -45,16 +51,19 @@ impl<'a, T: Hash> Input<'a> for T {
     }
 
     #[inline]
-    fn validate(&self, _: &()) -> bool {
-        true
+    fn call(&self, _: &Self::Call) -> u128 {
+        // No calls on hashed inputs.
+        0
     }
 
     #[inline]
-    fn replay(&mut self, _: &Self::Constraint) {}
+    fn call_mut(&mut self, _: &Self::Call) {}
 
     #[inline]
-    fn retrack(self, _: &'a ()) -> (Self, Self::Outer) {
-        (self, ())
+    fn attach<S>(&mut self, _: &'a mut Self::Storage<S>, _: S)
+    where
+        S: Sink<Call = Self::Call> + Copy + 'a,
+    {
     }
 }
 
@@ -62,29 +71,47 @@ impl<'a, T> Input<'a> for Tracked<'a, T>
 where
     T: Track + ?Sized,
 {
-    // Forward constraint from `Trackable` implementation.
-    type Constraint = <T as Validate>::Constraint;
-    type Outer = Option<&'a Self::Constraint>;
+    type Call = T::Call;
+    type Storage<S: Sink<Call = Self::Call> + 'a> = Option<MergedSink<'a, S>>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate_with_id(constraint, self.id)
+    fn call(&self, call: &Self::Call) -> u128 {
+        let hash = if let Some(accelerator) = crate::accelerate::get(self.id) {
+            // When we have an accelerator for this tracked instance, we might
+            // already have a cached value of the return hash. Then, we don't
+            // need to actually perform the call.
+            let mut map = accelerator.lock();
+            let call_hash = crate::hash::hash(call);
+            *map.entry(call_hash).or_insert_with(|| self.value.call(call))
+        } else {
+            self.value.call(call)
+        };
+
+        // The `call` method is used during the constraint validation tree
+        // traversal. It's crucial that we also send calls to the outer sink
+        // here so that the outer sink observes the calls when we have a cache
+        // hit. We do _not_ replay the constraints in another way.
+        if let Some(sink) = self.sink {
+            sink.emit(call.clone(), hash);
+        }
+
+        hash
     }
 
     #[inline]
-    fn replay(&mut self, _: &Self::Constraint) {}
+    fn call_mut(&mut self, _: &Self::Call) {
+        // Cannot perform a mutable call on an immutable reference.
+    }
 
     #[inline]
-    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer) {
-        let tracked = Tracked {
-            value: self.value,
-            constraint: Some(constraint),
-            id: self.id,
-        };
-        (tracked, self.constraint)
+    fn attach<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+    where
+        S: Sink<Call = Self::Call> + Copy + 'a,
+    {
+        self.sink = Some(storage.insert(MergedSink { prev: self.sink, sink }));
     }
 }
 
@@ -92,27 +119,60 @@ impl<'a, T> Input<'a> for TrackedMut<'a, T>
 where
     T: Track + ?Sized,
 {
-    // Forward constraint from `Trackable` implementation.
-    type Constraint = T::Constraint;
-    type Outer = Option<&'a Self::Constraint>;
+    type Call = T::Call;
+    type Storage<S: Sink<Call = Self::Call> + 'a> = Option<MergedSink<'a, S>>;
 
     #[inline]
     fn key<H: Hasher>(&self, _: &mut H) {}
 
     #[inline]
-    fn validate(&self, constraint: &Self::Constraint) -> bool {
-        self.value.validate(constraint)
+    fn call(&self, call: &Self::Call) -> u128 {
+        let hash = self.value.call(call);
+        if let Some(sink) = self.sink {
+            sink.emit(call.clone(), hash);
+        }
+        hash
     }
 
     #[inline]
-    fn replay(&mut self, constraint: &Self::Constraint) {
-        self.value.replay(constraint);
+    fn call_mut(&mut self, call: &Self::Call) {
+        self.value.call_mut(call);
+        if let Some(sink) = self.sink {
+            sink.emit(call.clone(), 0);
+        }
     }
 
     #[inline]
-    fn retrack(self, constraint: &'a Self::Constraint) -> (Self, Self::Outer) {
-        let tracked = TrackedMut { value: self.value, constraint: Some(constraint) };
-        (tracked, self.constraint)
+    fn attach<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+    where
+        S: Sink<Call = Self::Call> + Copy + 'a,
+    {
+        self.sink = Some(storage.insert(MergedSink { prev: self.sink, sink }));
+    }
+}
+
+/// Combines an existing sink from a tracked type with `S`.
+#[derive(Copy, Clone)]
+pub struct MergedSink<'a, S: Sink> {
+    prev: Option<&'a dyn Sink<Call = S::Call>>,
+    sink: S,
+}
+
+impl<'a, C, S> Sink for MergedSink<'a, S>
+where
+    C: Call,
+    S: Sink<Call = C>,
+{
+    type Call = C;
+
+    fn emit(&self, call: C, ret: u128) -> bool {
+        if let Some(prev) = self.prev {
+            // If the current sink already deduplicated the value, we don't have
+            // to go the previous sink in the first place.
+            self.sink.emit(call.clone(), ret) && prev.emit(call, ret)
+        } else {
+            self.sink.emit(call, ret)
+        }
     }
 }
 
@@ -120,11 +180,11 @@ where
 pub struct Multi<T>(pub T);
 
 macro_rules! multi {
-    ($($param:tt $alt:tt $idx:tt ),*) => {
-        #[allow(unused_variables, non_snake_case)]
+    (@inner $($param:ident $alt:ident $idx:tt),*; $params:tt) => {
         impl<'a, $($param: Input<'a>),*> Input<'a> for Multi<($($param,)*)> {
-            type Constraint = ($($param::Constraint,)*);
-            type Outer = ($($param::Outer,)*);
+            type Call = MultiCall<$($param::Call),*>;
+            type Storage<S: Sink<Call = Self::Call> + 'a> =
+                ($($param::Storage<MappedSink<$idx, S>>,)*);
 
             #[inline]
             fn key<T: Hasher>(&self, state: &mut T) {
@@ -132,37 +192,65 @@ macro_rules! multi {
             }
 
             #[inline]
-            fn validate(&self, constraint: &Self::Constraint) -> bool {
-                true $(&& (self.0).$idx.validate(&constraint.$idx))*
+            fn call(&self, call: &Self::Call) -> u128 {
+                match *call {
+                    $(MultiCall::$param(ref $param) => (self.0).$idx.call($param)),*
+                }
             }
 
             #[inline]
-            fn replay(&mut self, constraint: &Self::Constraint) {
-                $((self.0).$idx.replay(&constraint.$idx);)*
+            fn call_mut(&mut self, call: &Self::Call) {
+                match *call {
+                    $(MultiCall::$param(ref $param) => (self.0).$idx.call_mut($param)),*
+                }
             }
 
             #[inline]
-            fn retrack(
-                self,
-                constraint: &'a Self::Constraint,
-            ) -> (Self, Self::Outer) {
-                $(let $param = (self.0).$idx.retrack(&constraint.$idx);)*
-                (Multi(($($param.0,)*)), ($($param.1,)*))
+            fn attach<S>(&mut self, storage: &'a mut Self::Storage<S>, sink: S)
+            where
+                S: Sink<Call = Self::Call> + Copy + 'a {
+                $((self.0).$idx.attach(&mut storage.$idx, MappedSink::<$idx, _>(sink));)*
             }
         }
 
-        #[allow(unused_variables, clippy::unused_unit)]
-        impl<$($param: Join<$alt>, $alt),*> Join<($($alt,)*)> for ($($param,)*) {
-            #[inline]
-            fn join(&self, constraint: &($($alt,)*)) {
-                $(self.$idx.join(&constraint.$idx);)*
-            }
+        #[derive(PartialEq, Clone, Hash)]
+        pub enum MultiCall<$($param),*> {
+            $($param($param),)*
+        }
 
+        impl<$($param: Call),*> Call for MultiCall<$($param),*> {
             #[inline]
-            fn take(&self) -> Self {
-                ($(self.$idx.take(),)*)
+            fn is_mutable(&self) -> bool {
+                match *self {
+                    $(Self::$param(ref $param) => $param.is_mutable(),)*
+                }
             }
         }
+
+        #[derive(Copy, Clone)]
+        pub struct MappedSink<const I: usize, S>(S);
+
+        $(multi!(@mapped $param $idx; $params);)*
+    };
+
+    (@mapped $pick:ident $idx:tt; ($($param:ident),*)) => {
+        impl<S, $($param),*> Sink for MappedSink<$idx, S>
+        where
+            S: Sink<Call = MultiCall<$($param),*>>,
+        {
+            type Call = $pick;
+
+            fn emit(&self, call: $pick, ret: u128) -> bool {
+                self.0.emit(MultiCall::$pick(call), ret)
+            }
+        }
+    };
+
+    ($($param:ident $alt:ident $idx:tt),*) => {
+        #[allow(unused_variables, clippy::unused_unit, non_snake_case)]
+        const _: () = {
+            multi!(@inner $($param $alt $idx),*; ($($param),*));
+        };
     };
 }
 

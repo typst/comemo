@@ -94,13 +94,15 @@ mod hash;
 mod input;
 mod memoize;
 mod track;
+mod tree;
 
 #[cfg(feature = "testing")]
 pub mod testing;
 
+pub use crate::constraint::Constraint;
 pub use crate::hash::Prehashed;
 pub use crate::memoize::evict;
-pub use crate::track::{Track, Tracked, TrackedMut, Validate};
+pub use crate::track::{Track, Tracked, TrackedMut};
 
 #[cfg(feature = "macros")]
 pub use comemo_macros::{memoize, track};
@@ -108,11 +110,10 @@ pub use comemo_macros::{memoize, track};
 /// These are implementation details. Do not rely on them!
 #[doc(hidden)]
 pub mod internal {
-    pub use parking_lot::RwLock;
-
-    pub use crate::constraint::{Call, ImmutableConstraint, MutableConstraint};
     pub use crate::hash::hash;
     pub use crate::input::{Input, Multi, assert_hashable_or_trackable};
-    pub use crate::memoize::{Cache, CacheData, memoize, register_evictor};
-    pub use crate::track::{Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref};
+    pub use crate::memoize::{Cache, memoize, register_evictor};
+    pub use crate::track::{
+        Call, Sink, Surfaces, to_parts_mut_mut, to_parts_mut_ref, to_parts_ref,
+    };
 }

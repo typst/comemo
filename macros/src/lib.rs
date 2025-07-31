@@ -39,8 +39,7 @@ use syn::{Error, Result, parse_quote};
 /// - _Mutably tracked:_  The argument is of the form `TrackedMut<T>`. Through
 ///   this type, you can safely mutate an argument from within a memoized
 ///   function. If there is a cache hit, comemo will replay all mutations.
-///   Mutable tracked methods can also have return values that are tracked just
-///   like immutable methods.
+///   Mutable tracked methods cannot have return values.
 ///
 /// # Restrictions
 /// The following restrictions apply to memoized functions:
@@ -50,10 +49,39 @@ use syn::{Error, Result, parse_quote};
 ///   expose to the hasher**. Otherwise, memoized results might get reused
 ///   invalidly.
 ///
-/// - The **only obversable impurity memoized functions may exhibit are
+/// - The **only observable impurity memoized functions may exhibit are
 ///   mutations through `TrackedMut<T>` arguments.** Comemo stops you from using
 ///   basic mutable arguments, but it cannot determine all sources of impurity,
 ///   so this is your responsibility.
+///
+/// - Memoized functions must **call tracked methods in _reorderably
+///   deterministic_ fashion.** Consider two executions A and B of a memoized
+///   function. We define the following two properties:
+///
+///   - _In-order deterministic:_ If the first N tracked calls and their results
+///     are the same in A and B, then the N+1th call must also be the same. This
+///     is a fairly natural property as far as deterministic functions go, as,
+///     if the first N calls and their results were the same across two
+///     execution, the available information for choosing the N+1th call is the
+///     same. However, this property is a bit too restrictive in practice. For
+///     instance, a function that internally uses multi-threading may call
+///     tracked methods out-of-order while still producing a deterministic
+///     result.
+///
+///   - _Reorderably deterministic:_ If, for the first N calls in A, B has
+///     matching calls (same arguments, same return value) somewhere in its call
+///     sequence, then the N+1th call invoked by A must also occur _somewhere_
+///     in the call sequence of B. This is a somewhat relaxed version of
+///     in-order determinism that still allows comemo to perform internal
+///     optimizations while permitting memoization of many more functions (e.g.
+///     ones that use internal multi-threading in an outwardly deterministic
+///     fashion).
+///
+///   Reorderable determinism is necessary for efficient cache lookups. If a
+///   memoized function is not reorderably determinstic, comemo may panic in
+///   debug mode to bring your attention to this. Meanwhile, in release mode,
+///   memoized functions will still yield correct results, but caching may prove
+///   ineffective.
 ///
 /// - The output of a memoized function must be `Send` and `Sync` because it is
 ///   stored in the global cache.
@@ -126,10 +154,6 @@ pub fn memoize(args: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 ///   arguments, tracking is the only option, so that comemo can replay the side
 ///   effects when there is a cache hit.
 ///
-/// If you attempt to track any mutable methods, your type must implement
-/// [`Clone`] so that comemo can roll back attempted mutations which did not
-/// result in a cache hit.
-///
 /// # Restrictions
 /// Tracked impl blocks or traits may not be generic and may only contain
 /// methods. Just like with memoized functions, certain restrictions apply to
@@ -146,6 +170,11 @@ pub fn memoize(args: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 /// - The return values of tracked methods must implement
 ///   [`Hash`](std::hash::Hash) and **must feed all the information they expose
 ///   to the hasher**. Otherwise, memoized results might get reused invalidly.
+///
+/// - Mutable tracked methods must not have a return value.
+///
+/// - A tracked implementation cannot have a mix of mutable and immutable
+///   methods.
 ///
 /// - The arguments to a tracked method must be `Send` and `Sync` because they
 ///   are stored in the global cache.
