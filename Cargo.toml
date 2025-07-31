@@ -4,6 +4,7 @@ resolver = "2"
 
 [workspace.package]
 version = "0.4.0"
+rust-version = "1.88" # also change in ci.yml
 authors = ["Laurenz <laurmaedje@gmail.com>"]
 edition = "2024"
 repository = "https://github.com/typst/comemo"
@@ -30,6 +31,7 @@ syn = { version = "2", features = ["full"] }
 name = "comemo"
 description = "Incremental computation through constrained memoization."
 version = { workspace = true }
+rust-version = { workspace = true }
 authors = { workspace = true }
 edition = { workspace = true }
 repository = { workspace = true }

@@ -2,6 +2,7 @@
 name = "comemo-macros"
 description = "Procedural macros for comemo."
 version = { workspace = true }
+rust-version = { workspace = true }
 authors = { workspace = true }
 edition = { workspace = true }
 repository = { workspace = true }
