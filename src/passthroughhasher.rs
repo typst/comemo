@@ -14,14 +14,17 @@ pub(crate) struct PassthroughHasher {
 }
 
 impl Hasher for PassthroughHasher {
+    #[inline(always)]
     fn finish(&self) -> u64 {
         self.value
     }
 
+    #[inline]
     fn write(&mut self, _bytes: &[u8]) {
         unimplemented!("Unsupported operation")
     }
 
+    #[inline]
     fn write_u128(&mut self, i: u128) {
         // truncating conversion
         self.value = i as u64;
@@ -30,6 +33,7 @@ impl Hasher for PassthroughHasher {
 
 impl BuildHasher for BuildPassthroughHasher {
     type Hasher = PassthroughHasher;
+    #[inline]
     fn build_hasher(&self) -> PassthroughHasher {
         PassthroughHasher::default()
     }
