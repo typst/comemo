@@ -228,6 +228,7 @@ macro_rules! multi {
         }
 
         #[derive(Copy, Clone)]
+        #[allow(dead_code)]
         pub struct MappedSink<const I: usize, S>(S);
 
         $(multi!(@mapped $param $idx; $params);)*

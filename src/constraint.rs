@@ -114,13 +114,13 @@ impl<C: Hash> CallSequence<C> {
             #[allow(unused_variables)]
             Entry::Occupied(entry) => {
                 #[cfg(debug_assertions)]
-                if let Some((_, ret2)) = &self.vec[*entry.get()] {
-                    if ret != *ret2 {
-                        panic!(
-                            "comemo: found differing return values. \
-                             is there an impure tracked function?"
-                        )
-                    }
+                if let Some((_, ret2)) = &self.vec[*entry.get()]
+                    && ret != *ret2
+                {
+                    panic!(
+                        "comemo: found differing return values. \
+                         is there an impure tracked function?"
+                    )
                 }
                 false
             }
