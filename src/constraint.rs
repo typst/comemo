@@ -34,7 +34,7 @@ impl<C> Constraint<C> {
     /// recorded calls one by one.
     pub fn validate<T>(&self, value: &T) -> bool
     where
-        T: Track<Call = C>,
+        T: Track<Call = C> + ?Sized,
     {
         self.0
             .lock()
