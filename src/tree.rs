@@ -5,6 +5,7 @@ use rustc_hash::FxHashMap;
 use slab::Slab;
 
 use crate::constraint::CallSequence;
+use crate::passthroughhasher::PassthroughHashMap;
 
 /// A tree data structure that associates a value with a key hash and a sequence
 /// of (call, return hash) pairs.
@@ -18,7 +19,7 @@ pub struct CallTree<C, T> {
     /// Leaf nodes, directly storing outputs.
     leaves: Slab<LeafNode<T>>,
     /// The initial node for the given key hash.
-    start: FxHashMap<u128, NodeId>,
+    start: PassthroughHashMap<u128, NodeId>,
     /// Maps from parent nodes to child nodes. The key is a pair of an inner
     /// node ID and a return hash for that call. The value is the node to
     /// transition to.
@@ -50,8 +51,8 @@ impl<C, T> CallTree<C, T> {
         Self {
             inner: Slab::new(),
             leaves: Slab::new(),
+            start: PassthroughHashMap::default(),
             edges: FxHashMap::default(),
-            start: FxHashMap::default(),
         }
     }
 }

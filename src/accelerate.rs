@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rustc_hash::FxHashMap;
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
+
+use crate::passthroughhasher::PassthroughHashMap;
 
 /// The global list of currently alive accelerators.
 static ACCELERATORS: RwLock<(usize, Vec<Accelerator>)> = RwLock::new((0, Vec::new()));
@@ -12,7 +13,7 @@ static ID: AtomicUsize = AtomicUsize::new(0);
 /// The type of each individual accelerator.
 ///
 /// Maps from call hashes to return hashes.
-type Accelerator = Mutex<FxHashMap<u128, u128>>;
+type Accelerator = Mutex<PassthroughHashMap<u128, u128>>;
 
 /// Generate a new accelerator.
 pub fn id() -> usize {
@@ -58,6 +59,6 @@ pub fn get(id: usize) -> Option<MappedRwLockReadGuard<'static, Accelerator>> {
 fn resize(len: usize) {
     let mut pair = ACCELERATORS.write();
     if len > pair.1.len() {
-        pair.1.resize_with(len, || Mutex::new(FxHashMap::default()));
+        pair.1.resize_with(len, || Mutex::new(PassthroughHashMap::default()));
     }
 }

@@ -93,6 +93,7 @@ mod constraint;
 mod hash;
 mod input;
 mod memoize;
+mod passthroughhasher;
 mod track;
 mod tree;
 

@@ -2,9 +2,9 @@ use std::collections::hash_map::Entry;
 use std::hash::Hash;
 
 use parking_lot::Mutex;
-use rustc_hash::FxHashMap;
 
 use crate::Track;
+use crate::passthroughhasher::PassthroughHashMap;
 use crate::track::{Call, Sink};
 
 /// Records calls performed on a trackable type.
@@ -82,7 +82,7 @@ pub struct CallSequence<C> {
     /// The raw calls. In order, but deduplicated via the `map`.
     vec: Vec<Option<(C, u128)>>,
     /// A map from hashes of calls to the indices in the vector.
-    map: FxHashMap<u128, usize>,
+    map: PassthroughHashMap<u128, usize>,
     /// A cursor for iteration in `Self::next`.
     cursor: usize,
 }
@@ -92,7 +92,7 @@ impl<C> CallSequence<C> {
     pub fn new() -> Self {
         Self {
             vec: Vec::new(),
-            map: FxHashMap::default(),
+            map: PassthroughHashMap::default(),
             cursor: 0,
         }
     }
