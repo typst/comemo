@@ -90,7 +90,7 @@ use syn::{Error, Result, parse_quote};
 /// arguments.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// /// Evaluate a `.calc` script.
 /// #[comemo::memoize]
 /// fn evaluate(script: &str, files: comemo::Tracked<Files>) -> i32 {
@@ -120,7 +120,7 @@ use syn::{Error, Result, parse_quote};
 /// and caching.
 ///
 /// ## Example
-/// ```
+/// ```ignore
 /// /// Compute the sum of a slice of floats, but only memoize if the slice is
 /// /// longer than 1024 elements.
 /// #[comemo::memoize(enabled = add.len() > 1024)]
@@ -188,7 +188,7 @@ pub fn memoize(args: BoundaryStream, stream: BoundaryStream) -> BoundaryStream {
 /// - They cannot use destructuring patterns in their arguments.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// /// File storage.
 /// struct Files(HashMap<PathBuf, String>);
 ///
