@@ -96,13 +96,13 @@ where
 /// This removes all memoized results from the cache whose age is larger than or
 /// equal to `max_age`. The age of a result grows by one during each eviction
 /// and is reset to zero when the result produces a cache hit. Set `max_age` to
-/// zero to completely clear the cache.
+/// zero to completely clear the cache and release its backing storage.
 pub fn evict(max_age: usize) {
     for subevict in EVICTORS.read().iter() {
         subevict(max_age);
     }
 
-    accelerate::evict();
+    accelerate::evict(max_age == 0);
 }
 
 /// Register an eviction function in the global list.
