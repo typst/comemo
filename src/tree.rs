@@ -191,6 +191,11 @@ impl<C, T> CallTree<C, T> {
         // Prune edges.
         self.edges.retain(|_, node| exists(*node));
         self.start.retain(|_, node| exists(*node));
+
+        // Empty slabs and maps otherwise retain their high-water allocations.
+        if self.leaves.is_empty() {
+            *self = Self::new();
+        }
     }
 
     /// Checks a few invariants of the data structure.
@@ -285,6 +290,23 @@ mod tests {
     use quickcheck::Arbitrary;
 
     use super::*;
+
+    #[test]
+    fn test_retain_releases_empty_storage() {
+        let mut tree = CallTree::new();
+        for key in 0..1024 {
+            tree.insert(key, [('a', key), ('b', key + 1)].into_iter().collect(), key)
+                .unwrap();
+        }
+        tree.retain(|_| false);
+        tree.assert_consistency();
+        assert_eq!(tree.inner.capacity(), 0);
+        assert_eq!(tree.leaves.capacity(), 0);
+        assert_eq!(tree.start.capacity(), 0);
+        assert_eq!(tree.edges.capacity(), 0);
+        tree.insert(0, [('a', 1)].into_iter().collect(), 42).unwrap();
+        assert_eq!(tree.get(0, |_| 1), Some(&42));
+    }
 
     #[test]
     fn test_call_tree() {
