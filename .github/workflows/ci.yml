@@ -13,9 +13,9 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e814c742d4444ce2f3f6abddea7faf00161ed941 # 1.88.0
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test --workspace --all-features --no-run
       - run: cargo test --workspace --all-features --no-fail-fast
       - run: git diff --exit-code
@@ -24,11 +24,21 @@ jobs:
     name: Check clippy, formatting, and documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e814c742d4444ce2f3f6abddea7faf00161ed941 # 1.88.0
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --workspace --all-targets --all-features
       - run: cargo fmt --check --all
       - run: cargo doc --workspace --no-deps
+
+  licenses:
+    name: Check licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e814c742d4444ce2f3f6abddea7faf00161ed941 # 1.88.0
+      - uses: typst/notices@0e44c240da489017e8766ed80eab2d03b2833a0c # v0.1.2
+        with:
+          args: check --deps --allow-missing --all-features
